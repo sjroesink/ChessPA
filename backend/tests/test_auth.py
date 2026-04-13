@@ -61,5 +61,14 @@ async def test_lichess_login_redirects(client):
 
 
 async def test_logout(client):
-    response = await client.post("/auth/logout")
+    import uuid
+    from app.auth.dependencies import _sessions
+
+    session_id = "logout-test"
+    user_id = uuid.uuid4()
+    set_session(session_id, user_id)
+    assert session_id in _sessions
+
+    response = await client.post("/auth/logout", cookies={"chesspa_session": session_id})
     assert response.status_code == 200
+    assert session_id not in _sessions

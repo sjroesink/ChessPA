@@ -1,7 +1,7 @@
 import secrets
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Response
 from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -80,7 +80,7 @@ async def lichess_callback(
 @router.post("/logout")
 async def logout(
     response: Response,
-    chesspa_session: str | None = None,
+    chesspa_session: str | None = Cookie(None),
 ):
     if chesspa_session:
         clear_session(chesspa_session)
