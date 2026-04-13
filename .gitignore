@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+
+# Node
+node_modules/
+.next/
+frontend/.env.local
+
+# IDE
+.idea/
+.vscode/
+
+# Environment
+.env
+backend/.env
+
+# Superpowers
+.superpowers/
