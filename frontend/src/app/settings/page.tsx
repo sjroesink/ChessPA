@@ -5,9 +5,9 @@ import { useEffect, useState, useRef } from "react";
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 interface ConnectedAccount {
-  id: number;
+  id: string;
   platform: string;
-  username: string;
+  platform_username: string;
   auto_sync: boolean;
 }
 
@@ -166,8 +166,8 @@ function AccountCard({
   onUnlink,
 }: {
   account: ConnectedAccount;
-  onToggleSync: (id: number, val: boolean) => Promise<void>;
-  onUnlink: (id: number) => Promise<void>;
+  onToggleSync: (id: string, val: boolean) => Promise<void>;
+  onUnlink: (id: string) => Promise<void>;
 }) {
   const [toggling, setToggling] = useState(false);
   const [unlinking, setUnlinking] = useState(false);
@@ -188,7 +188,7 @@ function AccountCard({
   }
 
   async function handleUnlink() {
-    if (!confirm(`${account.username} ontkoppelen?`)) return;
+    if (!confirm(`${account.platform_username} ontkoppelen?`)) return;
     setUnlinking(true);
     setError(null);
     try {
@@ -203,7 +203,7 @@ function AccountCard({
     <div style={cardStyle}>
       <div style={rowStyle}>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontWeight: 600, fontSize: "14px" }}>{account.username}</div>
+          <div style={{ fontWeight: 600, fontSize: "14px" }}>{account.platform_username}</div>
           <div style={{ fontSize: "12px", color: "var(--fg-secondary)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
             {account.platform.replace("_", ".")}
           </div>
@@ -264,7 +264,7 @@ export default function SettingsPage() {
       .finally(() => setLoadingAccounts(false));
   }, []);
 
-  async function handleToggleSync(id: number, val: boolean) {
+  async function handleToggleSync(id: string, val: boolean) {
     const res = await fetch(`${API_URL}/api/accounts/${id}/auto-sync`, {
       method: "PUT",
       credentials: "include",
@@ -274,7 +274,7 @@ export default function SettingsPage() {
     if (!res.ok) throw new Error();
   }
 
-  async function handleUnlink(id: number) {
+  async function handleUnlink(id: string) {
     const res = await fetch(`${API_URL}/api/accounts/${id}`, {
       method: "DELETE",
       credentials: "include",
@@ -300,10 +300,15 @@ export default function SettingsPage() {
         setConnectFeedback({ ok: false, msg: (err as { detail?: string }).detail ?? "Koppelen mislukt." });
         return;
       }
-      const newAccount: ConnectedAccount = await res.json();
-      setAccounts((prev) => [...prev, newAccount]);
+      const data = await res.json();
+      // Refetch accounts to get full objects with id
+      const meRes = await fetch(`${API_URL}/auth/me`, { credentials: "include" });
+      if (meRes.ok) {
+        const me = await meRes.json();
+        setAccounts(me.connected_accounts ?? []);
+      }
       setConnectUsername("");
-      setConnectFeedback({ ok: true, msg: `${newAccount.username} succesvol gekoppeld.` });
+      setConnectFeedback({ ok: true, msg: `${data.username} succesvol gekoppeld.` });
     } catch {
       setConnectFeedback({ ok: false, msg: "Netwerkfout bij koppelen." });
     } finally {
