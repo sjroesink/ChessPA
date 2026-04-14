@@ -6,6 +6,8 @@ import ChessBoard from "@/components/ChessBoard";
 import EvalBar from "@/components/EvalBar";
 import PieceIcon, { pieceFromSan, stripSanPiece } from "@/components/PieceIcon";
 import MoveComment from "@/components/MoveComment";
+import MotifBadge from "@/components/MotifBadge";
+import AccuracyChart from "@/components/AccuracyChart";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -23,6 +25,32 @@ type Game = {
   pgn: string;
 };
 
+type MultiPV = {
+  rank: number;
+  san: string;
+  uci: string;
+  eval_cp: number;
+  pv_san: string[];
+};
+
+type Motif = {
+  type: string;
+  attacker?: string;
+  pinned?: string;
+  target?: string;
+  front?: string;
+  back?: string;
+  square?: string;
+  squares?: string[];
+};
+
+type MaiaInfo = {
+  top1_san?: string | null;
+  top1_prob?: number | null;
+  match_played?: boolean | null;
+  rating_used?: number | null;
+};
+
 type MoveAnalysis = {
   move_number: number;
   color: "white" | "black";
@@ -33,6 +61,16 @@ type MoveAnalysis = {
   eval_after: number;
   classification: string;
   comment?: string | null;
+  win_percent_before?: number | null;
+  win_percent_after?: number | null;
+  accuracy_percent?: number | null;
+  is_critical_moment?: boolean | null;
+  maia?: MaiaInfo | null;
+  details?: {
+    multipv?: MultiPV[];
+    motifs?: Motif[];
+    features?: Record<string, unknown>;
+  };
 };
 
 type AnalysisResponse = {
@@ -442,6 +480,67 @@ export default function GameDetailPage() {
                     Commentaar wordt gegenereerd...
                   </p>
                 ) : null}
+
+                {/* Rich facts: accuracy/win%, maia trap, motifs, multipv */}
+                {(() => {
+                  const drop =
+                    typeof m.win_percent_before === "number" && typeof m.win_percent_after === "number"
+                      ? m.win_percent_before - m.win_percent_after
+                      : null;
+                  const motifs = m.details?.motifs || [];
+                  const multipv = m.details?.multipv || [];
+                  const showMaiaTrap =
+                    m.maia?.match_played &&
+                    (cls === "blunder" || cls === "mistake");
+                  const hasExtra =
+                    drop != null ||
+                    motifs.length > 0 ||
+                    multipv.length > 1 ||
+                    m.is_critical_moment ||
+                    showMaiaTrap;
+                  if (!hasExtra) return null;
+                  return (
+                    <div style={{ marginTop: 8, fontSize: 12, display: "flex", flexDirection: "column", gap: 4 }}>
+                      {(drop != null || m.accuracy_percent != null) && (
+                        <div style={{ color: "var(--fg-secondary)" }}>
+                          {m.accuracy_percent != null && <>Acc {m.accuracy_percent.toFixed(0)}%</>}
+                          {drop != null && <> · ΔWin {drop.toFixed(0)}%</>}
+                        </div>
+                      )}
+                      {m.is_critical_moment && (
+                        <div style={{ color: "#b45309" }}>Kritiek moment</div>
+                      )}
+                      {showMaiaTrap && (
+                        <div style={{ color: "#0369a1" }}>
+                          Menselijke valstrik (Maia-{m.maia?.rating_used ?? "?"})
+                        </div>
+                      )}
+                      {motifs.length > 0 && (
+                        <div>
+                          {motifs.map((mo, i) => (
+                            <MotifBadge key={i} motif={mo} />
+                          ))}
+                        </div>
+                      )}
+                      {multipv.length > 1 && (
+                        <details>
+                          <summary style={{ cursor: "pointer", color: "var(--fg-secondary)" }}>
+                            Alternatieven
+                          </summary>
+                          <ul style={{ margin: "4px 0 0 16px", padding: 0, listStyle: "none", fontFamily: "monospace" }}>
+                            {multipv.map((pv) => (
+                              <li key={pv.rank} style={{ display: "flex", gap: 6 }}>
+                                <span style={{ color: "var(--fg-secondary)" }}>#{pv.rank}</span>
+                                <span style={{ flex: 1 }}>{pv.pv_san.slice(0, 5).join(" ")}</span>
+                                <span>{(pv.eval_cp / 100).toFixed(2)}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </details>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
             );
           })()}

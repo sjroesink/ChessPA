@@ -16,6 +16,7 @@ from app.chess_services.time_control import classify_time_control
 from app.database import get_db
 from app.models.connected_account import ConnectedAccount
 from app.models.game import Game
+from app.models.game_summary import GameSummary
 from app.models.user import User
 
 router = APIRouter(prefix="/api/games", tags=["games"])
@@ -85,11 +86,33 @@ async def list_games(
     query = base.order_by(Game.played_at.desc()).offset(offset).limit(limit)
     rows = (await db.execute(query)).scalars().all()
 
+    # Fetch accompanying summaries for the page in one query.
+    game_ids = [g.id for g in rows]
+    accuracy_map: dict[uuid.UUID, float | None] = {}
+    if game_ids:
+        summary_rows = (
+            await db.execute(select(GameSummary).where(GameSummary.game_id.in_(game_ids)))
+        ).scalars().all()
+        summaries_by_game = {s.game_id: s for s in summary_rows}
+        for g in rows:
+            s = summaries_by_game.get(g.id)
+            if s is None:
+                accuracy_map[g.id] = None
+                continue
+            accuracy_map[g.id] = (
+                s.accuracy_white if g.user_color == "white" else s.accuracy_black
+            )
+
+    def _with_accuracy(g: Game) -> dict:
+        d = _game_to_dict(g)
+        d["accuracy"] = accuracy_map.get(g.id)
+        return d
+
     return {
         "total": total,
         "page": page,
         "limit": limit,
-        "games": [_game_to_dict(g) for g in rows],
+        "games": [_with_accuracy(g) for g in rows],
     }
 
 

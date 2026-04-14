@@ -15,6 +15,7 @@ type Game = {
   user_elo: number;
   played_at: string;
   analysis_status: string;
+  accuracy?: number | null;
 };
 
 type GamesResponse = {
@@ -323,7 +324,16 @@ export default function GamesPage() {
                     </td>
                     <td style={{ padding: "10px 14px" }}>
                       {game.analysis_status === "done" ? (
-                        <span style={{ color: "var(--success)", fontSize: "12px", fontWeight: 600 }}>Geanalyseerd</span>
+                        <span style={{ display: "inline-flex", gap: 8, alignItems: "baseline" }}>
+                          <span style={{ color: "var(--success)", fontSize: "12px", fontWeight: 600 }}>
+                            Geanalyseerd
+                          </span>
+                          {game.accuracy != null && (
+                            <span style={{ color: "var(--fg-secondary)", fontSize: "12px" }}>
+                              Acc {game.accuracy.toFixed(0)}%
+                            </span>
+                          )}
+                        </span>
                       ) : game.analysis_status === "analyzing" ? (
                         <span style={{ color: "var(--accent)", fontSize: "12px" }}>Bezig...</span>
                       ) : game.analysis_status === "failed" ? (

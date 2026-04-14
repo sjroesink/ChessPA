@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import WeaknessReport from "@/components/WeaknessReport";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -288,6 +289,12 @@ export default function CoachPage() {
             <div style={kpiLabelStyle}>Totaal partijen</div>
           </div>
         </div>
+      </div>
+
+      {/* Weakness report (data-driven aggregation across games) */}
+      <div style={sectionStyle}>
+        <div style={sectionHeaderStyle}>Zwaktes (op basis van analyses)</div>
+        <WeaknessReport />
       </div>
 
       {/* AI Coaching insights */}
