@@ -11,6 +11,8 @@ from app.chess_services.import_service import import_chesscom_game, import_liche
 from app.models.game import Game
 from app.models.move_analysis import MoveAnalysis
 from app.models.game_summary import GameSummary
+from app.models.user import User
+from app.coaching.service import generate_coaching_insights
 from app.analysis.analyzer import analyze_game_moves
 from app.analysis.stockfish import open_engine
 from app.analysis.summary import compute_game_summary
@@ -141,3 +143,28 @@ async def _analyze_game_async(game_id: str):
         if engine_instance:
             engine_instance.quit()
         await engine_db.dispose()
+
+
+@celery_app.task(name="app.worker.tasks.generate_all_coaching")
+def generate_all_coaching():
+    """Generate coaching insights for all users with enough analyzed games."""
+    return asyncio.run(_generate_all_coaching_async())
+
+
+async def _generate_all_coaching_async():
+    engine, factory = _get_session_factory()
+    total_generated = 0
+
+    async with factory() as db:
+        result = await db.execute(select(User))
+        users = result.scalars().all()
+
+        for user in users:
+            try:
+                insights = await generate_coaching_insights(db, user.id)
+                total_generated += len(insights)
+            except Exception as e:
+                print(f"Coaching error for user {user.username}: {e}")
+
+    await engine.dispose()
+    return {"users_processed": len(users), "insights_generated": total_generated}

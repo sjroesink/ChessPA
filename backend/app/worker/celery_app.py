@@ -17,5 +17,9 @@ celery_app.conf.update(
             "task": "app.worker.tasks.sync_all_accounts",
             "schedule": 1800.0,
         },
+        "generate-coaching-every-6-hours": {
+            "task": "app.worker.tasks.generate_all_coaching",
+            "schedule": 21600.0,  # 6 hours
+        },
     },
 )
