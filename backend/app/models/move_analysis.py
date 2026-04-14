@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import String, Integer, Float, ForeignKey, Index
+from sqlalchemy import String, Integer, Float, Text, ForeignKey, Index
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -22,6 +22,8 @@ class MoveAnalysis(Base):
     eval_after: Mapped[float] = mapped_column(Float)
     best_move_san: Mapped[str] = mapped_column(String(10))
     classification: Mapped[str] = mapped_column(String(15))
+    fen: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    comment: Mapped[str | None] = mapped_column(Text, nullable=True)
     time_spent_sec: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     game = relationship("Game", back_populates="move_analyses")

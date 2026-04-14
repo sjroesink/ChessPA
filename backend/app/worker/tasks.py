@@ -16,6 +16,7 @@ from app.coaching.service import generate_coaching_insights
 from app.analysis.analyzer import analyze_game_moves
 from app.analysis.stockfish import open_engine
 from app.analysis.summary import compute_game_summary
+from app.analysis.commentary import generate_move_commentary
 
 
 def _get_session_factory():
@@ -111,6 +112,7 @@ async def _analyze_game_async(game_id: str):
                     eval_after=mr["eval_after"],
                     best_move_san=mr["best_move_san"],
                     classification=mr["classification"],
+                    fen=mr.get("fen"),
                 )
                 db.add(ma)
 
@@ -137,6 +139,12 @@ async def _analyze_game_async(game_id: str):
             db.add(game_summary)
             game.analysis_status = "done"
             await db.commit()
+
+            # Queue LLM commentary for significant errors
+            try:
+                generate_move_commentary_task.delay(str(game.id))
+            except Exception:
+                pass
 
             return {"status": "done", "moves_analyzed": len(move_results), "blunders": summary_data["blunders"]}
     finally:
@@ -168,3 +176,65 @@ async def _generate_all_coaching_async():
 
     await engine.dispose()
     return {"users_processed": len(users), "insights_generated": total_generated}
+
+
+@celery_app.task(name="app.worker.tasks.generate_move_commentary_task")
+def generate_move_commentary_task(game_id: str):
+    """Generate LLM commentary for significant move errors in a game."""
+    return asyncio.run(_generate_move_commentary_async(game_id))
+
+
+async def _generate_move_commentary_async(game_id: str):
+    import uuid
+    engine_db, factory = _get_session_factory()
+
+    async with factory() as db:
+        # Load game for user_color
+        game_result = await db.execute(
+            select(Game).where(Game.id == uuid.UUID(game_id))
+        )
+        game = game_result.scalar_one_or_none()
+        if game is None:
+            await engine_db.dispose()
+            return {"error": "Game not found"}
+
+        # Load move analyses for this game
+        result = await db.execute(
+            select(MoveAnalysis).where(MoveAnalysis.game_id == uuid.UUID(game_id))
+        )
+        analyses = result.scalars().all()
+
+        if not analyses:
+            await engine_db.dispose()
+            return {"error": "No move analyses found"}
+
+        # Build move dicts for commentary
+        move_dicts = [
+            {
+                "move_number": ma.move_number,
+                "color": ma.color,
+                "move_san": ma.move_san,
+                "best_move_san": ma.best_move_san,
+                "eval_before": ma.eval_before,
+                "eval_after": ma.eval_after,
+                "centipawn_loss": abs(ma.eval_before - ma.eval_after),
+                "fen": ma.fen or "",
+            }
+            for ma in analyses
+            if ma.fen  # skip moves without FEN (pre-migration)
+        ]
+
+        comments = await generate_move_commentary(move_dicts, game.user_color)
+
+        # Update move analyses with comments
+        updated = 0
+        for ma in analyses:
+            key = (ma.move_number, ma.color)
+            if key in comments:
+                ma.comment = comments[key]
+                updated += 1
+
+        await db.commit()
+
+    await engine_db.dispose()
+    return {"game_id": game_id, "comments_added": updated}

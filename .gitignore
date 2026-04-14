@@ -19,3 +19,7 @@ backend/.env
 
 # Superpowers
 .superpowers/
+
+# Claude / Playwright tool state
+.claude/
+.playwright-mcp/

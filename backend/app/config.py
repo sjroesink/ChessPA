@@ -15,9 +15,9 @@ class Settings(BaseSettings):
 
     # Stockfish
     stockfish_path: str = "stockfish"  # Path to Stockfish binary
-    stockfish_threads: int = 2
-    stockfish_hash_mb: int = 256
-    stockfish_depth: int = 20
+    stockfish_threads: int = 16
+    stockfish_hash_mb: int = 2048
+    stockfish_depth: int = 24
 
     # LLM Provider
     llm_provider: str = "claude"  # "claude" or "ollama"
@@ -25,6 +25,10 @@ class Settings(BaseSettings):
     anthropic_model: str = "claude-sonnet-4-6"
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "llama3.1"
+
+    # Move commentary
+    llm_commentary_mode: str = "single"  # "single" (per move, good for Ollama) or "batch" (one call, good for Claude)
+    llm_commentary_threshold: int = 25  # centipawn loss threshold; 25 = inaccuracy+, 100 = blunder only
 
     model_config = {"env_prefix": "CHESSPA_", "env_file": ".env"}
 

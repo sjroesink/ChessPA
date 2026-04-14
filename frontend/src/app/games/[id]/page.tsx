@@ -1,21 +1,24 @@
 "use client";
 import { useEffect, useState, useCallback } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { Chess } from "chess.js";
 import ChessBoard from "@/components/ChessBoard";
 import EvalBar from "@/components/EvalBar";
+import PieceIcon, { pieceFromSan, stripSanPiece } from "@/components/PieceIcon";
+import MoveComment from "@/components/MoveComment";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 type Game = {
-  id: number;
-  white: string;
-  black: string;
+  id: string;
+  white_username: string;
+  black_username: string;
   user_color: "white" | "black";
-  result: string;
+  result: string; // "win" | "loss" | "draw"
   opening_name: string;
   time_category: string;
   user_elo: number;
+  opponent_elo: number;
   played_at: string;
   pgn: string;
 };
@@ -24,9 +27,12 @@ type MoveAnalysis = {
   move_number: number;
   color: "white" | "black";
   san: string;
+  move_san?: string;
+  best_move_san?: string;
   eval_before: number;
   eval_after: number;
   classification: string;
+  comment?: string | null;
 };
 
 type AnalysisResponse = {
@@ -49,31 +55,50 @@ const CLASSIFICATION_LABELS: Record<string, string> = {
   blunder: "Blunder",
 };
 
+const CLASSIFICATION_SYMBOLS: Record<string, string> = {
+  best: "!",
+  good: "",
+  inaccuracy: "?!",
+  mistake: "?",
+  blunder: "??",
+};
+
 function getResultLabel(game: Game): { label: string; color: string } {
-  const isWhite = game.user_color === "white";
-  if (game.result === "1/2-1/2") return { label: "Remise", color: "var(--fg-secondary)" };
-  if (
-    (isWhite && game.result === "1-0") ||
-    (!isWhite && game.result === "0-1")
-  ) {
-    return { label: "Winst", color: "var(--success)" };
-  }
+  if (game.result === "draw") return { label: "Remise", color: "var(--fg-secondary)" };
+  if (game.result === "win") return { label: "Winst", color: "var(--success)" };
   return { label: "Verlies", color: "var(--danger)" };
 }
 
 export default function GameDetailPage() {
   const params = useParams();
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const id = params.id as string;
+
+  const initialMove = Number(searchParams.get("move")) || 0;
 
   const [game, setGame] = useState<Game | null>(null);
   const [analysis, setAnalysis] = useState<MoveAnalysis[] | null>(null);
   const [positions, setPositions] = useState<string[]>([]);
-  const [moveIndex, setMoveIndex] = useState(0);
+  const [moveIndex, setMoveIndexState] = useState(initialMove);
+
+  // Wrap setMoveIndex so URL stays in sync
+  const setMoveIndex = useCallback(
+    (val: number | ((prev: number) => number)) => {
+      setMoveIndexState((prev) => {
+        const next = typeof val === "function" ? val(prev) : val;
+        const url = next === 0 ? `/games/${id}` : `/games/${id}?move=${next}`;
+        router.replace(url, { scroll: false });
+        return next;
+      });
+    },
+    [id, router]
+  );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   // Parse PGN into positions
-  const parsePgn = useCallback((pgn: string): { positions: string[]; history: { san: string }[] } => {
+  const parsePgn = useCallback((pgn: string): { positions: string[]; history: { san: string; from: string; to: string }[] } => {
     const chess = new Chess();
     chess.loadPgn(pgn);
     const history = chess.history({ verbose: true });
@@ -120,7 +145,9 @@ export default function GameDetailPage() {
         if (gameData.pgn) {
           const { positions: pos } = parsePgn(gameData.pgn);
           setPositions(pos);
-          setMoveIndex(0);
+          // Clamp URL-provided move to valid range; keep 0 if fresh
+          const clamped = Math.max(0, Math.min(initialMove, pos.length - 1));
+          setMoveIndexState(clamped);
         }
       })
       .catch((err) => setError(err.message))
@@ -149,6 +176,52 @@ export default function GameDetailPage() {
     if (!analysis || moveIndex === 0) return 0;
     const move = analysis[moveIndex - 1];
     return move?.eval_after ?? 0;
+  };
+
+  // Squares to highlight for the last played move (chess.com style)
+  const lastMoveHighlights = (): { square: string; color: string }[] => {
+    if (moveIndex === 0) return [];
+    const beforeFen = positions[moveIndex - 1];
+    if (!beforeFen) return [];
+    try {
+      const chess = new Chess(beforeFen);
+      // Find which move was actually played (from history)
+      const full = new Chess();
+      if (game?.pgn) full.loadPgn(game.pgn);
+      const hist = full.history({ verbose: true });
+      const played = hist[moveIndex - 1];
+      if (!played) return [];
+
+      const cls = analysis?.[moveIndex - 1]?.classification;
+      const badColor = "rgba(235, 97, 80, 0.55)"; // red for bad moves
+      const okColor = "rgba(255, 241, 128, 0.55)"; // yellow for normal highlight
+      const color = cls === "blunder" || cls === "mistake" ? badColor : okColor;
+      return [
+        { square: played.from, color },
+        { square: played.to, color },
+      ];
+    } catch {
+      return [];
+    }
+  };
+
+  // Compute arrow for the best move when viewing a sub-optimal move
+  const bestMoveArrow = (): { startSquare: string; endSquare: string; color?: string }[] => {
+    if (!analysis || moveIndex === 0) return [];
+    const m = analysis[moveIndex - 1];
+    if (!m || !m.best_move_san) return [];
+    if (m.classification === "best" || m.classification === "good") return [];
+    if (m.move_san === m.best_move_san) return [];
+    const beforeFen = positions[moveIndex - 1];
+    if (!beforeFen) return [];
+    try {
+      const chess = new Chess(beforeFen);
+      const mv = chess.move(m.best_move_san);
+      if (!mv) return [];
+      return [{ startSquare: mv.from, endSquare: mv.to, color: "rgba(34, 197, 94, 0.75)" }];
+    } catch {
+      return [];
+    }
   };
 
   if (loading) {
@@ -194,7 +267,7 @@ export default function GameDetailPage() {
       {/* Header */}
       <div style={{ marginBottom: "24px" }}>
         <h1 style={{ fontSize: "24px", fontWeight: 600, marginBottom: "8px" }}>
-          {game.white} vs {game.black}
+          {game.white_username} vs {game.black_username}
         </h1>
         <div
           style={{
@@ -226,14 +299,46 @@ export default function GameDetailPage() {
       <div style={{ display: "flex", gap: "24px", flexWrap: "wrap" }}>
         {/* Left: Board + nav */}
         <div>
-          <div style={{ display: "flex", height: "400px" }}>
-            {analysis && <EvalBar value={currentEval()} />}
-            <ChessBoard
-              position={positions[moveIndex] || "start"}
-              orientation={game.user_color}
-              width={400}
-            />
-          </div>
+          {(() => {
+            const isUserWhite = game.user_color === "white";
+            const topName = isUserWhite ? game.black_username : game.white_username;
+            const topElo = isUserWhite ? game.opponent_elo : game.user_elo;
+            const bottomName = isUserWhite ? game.white_username : game.black_username;
+            const bottomElo = isUserWhite ? game.user_elo : game.opponent_elo;
+            const nameBarStyle: React.CSSProperties = {
+              display: "flex",
+              gap: "10px",
+              alignItems: "center",
+              padding: "6px 10px",
+              background: "var(--bg-secondary)",
+              border: "1px solid var(--border)",
+              fontSize: "14px",
+              width: "400px",
+              marginLeft: analysis ? "30px" : "0",
+            };
+            return (
+              <>
+                <div style={nameBarStyle}>
+                  <strong>{topName || "?"}</strong>
+                  {topElo && <span style={{ color: "var(--fg-secondary)" }}>({topElo})</span>}
+                </div>
+                <div style={{ display: "flex", height: "400px" }}>
+                  {analysis && <EvalBar value={currentEval()} />}
+                  <ChessBoard
+                    position={positions[moveIndex] || "start"}
+                    orientation={game.user_color}
+                    width={400}
+                    arrows={bestMoveArrow()}
+                    highlightedSquares={lastMoveHighlights()}
+                  />
+                </div>
+                <div style={nameBarStyle}>
+                  <strong>{bottomName || "?"}</strong>
+                  {bottomElo && <span style={{ color: "var(--fg-secondary)" }}>({bottomElo})</span>}
+                </div>
+              </>
+            );
+          })()}
 
           {/* Navigation buttons */}
           <div
@@ -286,6 +391,60 @@ export default function GameDetailPage() {
               Zet {moveIndex} / {positions.length - 1}
             </span>
           </div>
+
+          {/* Commentary panel */}
+          {moveIndex > 0 && analysis?.[moveIndex - 1] && (() => {
+            const m = analysis[moveIndex - 1];
+            const cls = m.classification;
+            const showAsError = cls === "blunder" || cls === "mistake" || cls === "inaccuracy";
+            const borderColor = CLASSIFICATION_COLORS[cls] || "var(--border)";
+            return (
+              <div
+                style={{
+                  marginTop: "16px",
+                  border: `1px solid ${borderColor}`,
+                  padding: "12px 14px",
+                  width: "400px",
+                  background: "var(--bg-secondary)",
+                }}
+              >
+                <div style={{ display: "flex", gap: "10px", alignItems: "center", marginBottom: "8px", flexWrap: "wrap" }}>
+                  <span style={{ fontSize: "13px", fontWeight: 600, display: "inline-flex", alignItems: "center", gap: "4px" }}>
+                    {m.move_number}.{m.color === "white" ? "" : " ..."}
+                    <PieceIcon piece={pieceFromSan(m.move_san ?? "")} color={m.color} size={16} />
+                    {stripSanPiece(m.move_san ?? "")}
+                  </span>
+                  {CLASSIFICATION_SYMBOLS[cls] && (
+                    <span
+                      title={CLASSIFICATION_LABELS[cls] || cls}
+                      style={{
+                        fontSize: "16px",
+                        fontWeight: 700,
+                        color: borderColor,
+                        cursor: "help",
+                      }}
+                    >
+                      {CLASSIFICATION_SYMBOLS[cls]}
+                    </span>
+                  )}
+                  {showAsError && m.best_move_san && m.best_move_san !== m.move_san && (
+                    <span style={{ fontSize: "12px", color: "var(--fg-secondary)", display: "inline-flex", alignItems: "center", gap: "4px" }}>
+                      Beste:{" "}
+                      <PieceIcon piece={pieceFromSan(m.best_move_san)} color={m.color} size={14} />
+                      <strong style={{ color: "var(--success)" }}>{stripSanPiece(m.best_move_san)}</strong>
+                    </span>
+                  )}
+                </div>
+                {m.comment ? (
+                  <MoveComment text={m.comment} color={m.color} />
+                ) : showAsError ? (
+                  <p style={{ fontSize: "12px", color: "var(--fg-secondary)", fontStyle: "italic", margin: 0 }}>
+                    Commentaar wordt gegenereerd...
+                  </p>
+                ) : null}
+              </div>
+            );
+          })()}
         </div>
 
         {/* Right: Move list */}
@@ -366,17 +525,19 @@ export default function GameDetailPage() {
                       gap: "6px",
                     }}
                   >
-                    {whiteMove.san}
-                    {whiteAnalysis?.classification && (
+                    <PieceIcon piece={pieceFromSan(whiteMove.san)} color="white" size={16} />
+                    <span>{stripSanPiece(whiteMove.san)}</span>
+                    {whiteAnalysis?.classification && CLASSIFICATION_SYMBOLS[whiteAnalysis.classification] && (
                       <span
+                        title={CLASSIFICATION_LABELS[whiteAnalysis.classification] || whiteAnalysis.classification}
                         style={{
-                          fontSize: "11px",
-                          padding: "1px 5px",
-                          border: `1px solid ${CLASSIFICATION_COLORS[whiteAnalysis.classification] || "var(--border)"}`,
+                          fontSize: "14px",
+                          fontWeight: 700,
                           color: CLASSIFICATION_COLORS[whiteAnalysis.classification] || "var(--fg-secondary)",
+                          cursor: "help",
                         }}
                       >
-                        {CLASSIFICATION_LABELS[whiteAnalysis.classification] || whiteAnalysis.classification}
+                        {CLASSIFICATION_SYMBOLS[whiteAnalysis.classification]}
                       </span>
                     )}
                   </span>
@@ -396,17 +557,19 @@ export default function GameDetailPage() {
                         gap: "6px",
                       }}
                     >
-                      {blackMove.san}
-                      {blackAnalysis?.classification && (
+                      <PieceIcon piece={pieceFromSan(blackMove.san)} color="black" size={16} />
+                      <span>{stripSanPiece(blackMove.san)}</span>
+                      {blackAnalysis?.classification && CLASSIFICATION_SYMBOLS[blackAnalysis.classification] && (
                         <span
+                          title={CLASSIFICATION_LABELS[blackAnalysis.classification] || blackAnalysis.classification}
                           style={{
-                            fontSize: "11px",
-                            padding: "1px 5px",
-                            border: `1px solid ${CLASSIFICATION_COLORS[blackAnalysis.classification] || "var(--border)"}`,
+                            fontSize: "14px",
+                            fontWeight: 700,
                             color: CLASSIFICATION_COLORS[blackAnalysis.classification] || "var(--fg-secondary)",
+                            cursor: "help",
                           }}
                         >
-                          {CLASSIFICATION_LABELS[blackAnalysis.classification] || blackAnalysis.classification}
+                          {CLASSIFICATION_SYMBOLS[blackAnalysis.classification]}
                         </span>
                       )}
                     </span>

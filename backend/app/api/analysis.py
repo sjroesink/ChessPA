@@ -29,7 +29,8 @@ async def get_analysis(
 
     moves_result = await db.execute(
         select(MoveAnalysis).where(MoveAnalysis.game_id == game.id)
-        .order_by(MoveAnalysis.move_number, MoveAnalysis.color)
+        # color DESC so "white" comes before "black" per move_number
+        .order_by(MoveAnalysis.move_number, MoveAnalysis.color.desc())
     )
     moves = moves_result.scalars().all()
 
@@ -50,6 +51,8 @@ async def get_analysis(
                 "eval_after": m.eval_after,
                 "best_move_san": m.best_move_san,
                 "classification": m.classification,
+                "fen": m.fen,
+                "comment": m.comment,
             }
             for m in moves
         ],

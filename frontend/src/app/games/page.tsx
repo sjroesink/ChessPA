@@ -14,6 +14,7 @@ type Game = {
   time_category: string;
   user_elo: number;
   played_at: string;
+  analysis_status: string;
 };
 
 type GamesResponse = {
@@ -236,6 +237,7 @@ export default function GamesPage() {
                   "Tijdcategorie",
                   "Elo",
                   "Datum",
+                  "Analyse",
                 ].map((h) => (
                   <th
                     key={h}
@@ -318,6 +320,17 @@ export default function GamesPage() {
                       }}
                     >
                       {formatDate(game.played_at)}
+                    </td>
+                    <td style={{ padding: "10px 14px" }}>
+                      {game.analysis_status === "done" ? (
+                        <span style={{ color: "var(--success)", fontSize: "12px", fontWeight: 600 }}>Geanalyseerd</span>
+                      ) : game.analysis_status === "analyzing" ? (
+                        <span style={{ color: "var(--accent)", fontSize: "12px" }}>Bezig...</span>
+                      ) : game.analysis_status === "failed" ? (
+                        <span style={{ color: "var(--danger)", fontSize: "12px" }}>Mislukt</span>
+                      ) : (
+                        <span style={{ color: "var(--fg-secondary)", fontSize: "12px" }}>Wachtrij</span>
+                      )}
                     </td>
                   </tr>
                 );
