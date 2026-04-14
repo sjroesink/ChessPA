@@ -4,8 +4,10 @@ from app.models import User, ConnectedAccount, Game, MoveAnalysis, GameSummary, 
 
 
 def test_user_creation():
-    user = User(username="testplayer")
+    user = User(username="testplayer", auth_provider="google", email="test@example.com")
     assert user.username == "testplayer"
+    assert user.email == "test@example.com"
+    assert user.auth_provider == "google"
     assert user.preferences == {}
 
 

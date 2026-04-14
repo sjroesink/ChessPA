@@ -1,6 +1,7 @@
+import uuid
 from unittest.mock import AsyncMock, patch
 
-from app.auth.dependencies import set_session
+from app.auth.dependencies import set_session, _sessions
 
 
 async def test_me_unauthenticated(client):
@@ -15,7 +16,6 @@ async def test_me_authenticated(client, app):
     from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
     from app.models import Base
     from app.config import settings
-    import uuid
 
     engine = create_async_engine(settings.database_url)
     async with engine.begin() as conn:
@@ -30,7 +30,7 @@ async def test_me_authenticated(client, app):
     app.dependency_overrides[get_db] = override_get_db
 
     async with session_factory() as db:
-        user = User(username="testplayer")
+        user = User(username="testplayer", auth_provider="google", email="test@example.com")
         db.add(user)
         await db.commit()
         await db.refresh(user)
@@ -47,6 +47,8 @@ async def test_me_authenticated(client, app):
     data = response.json()
     assert data["username"] == "testplayer"
     assert data["id"] == str(user_id)
+    assert data["email"] == "test@example.com"
+    assert data["auth_provider"] == "google"
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
@@ -60,10 +62,13 @@ async def test_lichess_login_redirects(client):
     assert "lichess.org/oauth" in response.headers["location"]
 
 
-async def test_logout(client):
-    import uuid
-    from app.auth.dependencies import _sessions
+async def test_google_login_redirects(client):
+    response = await client.get("/auth/google/login", follow_redirects=False)
+    assert response.status_code == 307
+    assert "accounts.google.com" in response.headers["location"]
 
+
+async def test_logout(client):
     session_id = "logout-test"
     user_id = uuid.uuid4()
     set_session(session_id, user_id)

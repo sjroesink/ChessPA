@@ -7,6 +7,9 @@ class Settings(BaseSettings):
     secret_key: str = "dev-secret-change-in-production"
     lichess_client_id: str = ""
     lichess_redirect_uri: str = "http://localhost:8000/auth/lichess/callback"
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    google_redirect_uri: str = "http://localhost:8000/auth/google/callback"
     frontend_url: str = "http://localhost:3000"
     encryption_key: str = ""
 

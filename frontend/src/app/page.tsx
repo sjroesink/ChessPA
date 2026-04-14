@@ -17,11 +17,34 @@ export default function LoginPage() {
       <p style={{ color: "var(--fg-secondary)", marginBottom: "24px" }}>
         Je persoonlijke schaakcoach
       </p>
-      <a href={`${API_URL}/auth/lichess/login`}>
+      <a href={`${API_URL}/auth/google/login`}>
         <button style={{ width: "260px", marginBottom: "8px" }}>
+          Login met Google
+        </button>
+      </a>
+      <a href={`${API_URL}/auth/lichess/login`}>
+        <button
+          style={{
+            width: "260px",
+            marginBottom: "24px",
+            background: "transparent",
+            color: "var(--fg)",
+            border: "1px solid var(--border)",
+          }}
+        >
           Login met Lichess
         </button>
       </a>
+      <p
+        style={{
+          color: "var(--fg-secondary)",
+          fontSize: "13px",
+          maxWidth: "300px",
+          textAlign: "center",
+        }}
+      >
+        Chess.com koppel je na het inloggen via Instellingen.
+      </p>
     </main>
   );
 }
