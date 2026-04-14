@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 
@@ -42,6 +42,17 @@ interface GamesResponse {
   total: number;
 }
 
+interface CoachingInsight {
+  id: string;
+  type: "weakness" | "pattern" | "strength";
+  title: string;
+  description: string;
+  severity: string;
+  related_games: string[];
+  generated_at: string | null;
+  model_version: string;
+}
+
 // ---- helpers ----
 
 function formatNum(val: number | null | undefined): string {
@@ -71,6 +82,32 @@ function formatDate(iso: string): string {
   const d = new Date(iso);
   const months = ["jan", "feb", "mrt", "apr", "mei", "jun", "jul", "aug", "sep", "okt", "nov", "dec"];
   return `${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear()}`;
+}
+
+function insightBorderColor(type: CoachingInsight["type"]): string {
+  if (type === "weakness") return "var(--danger)";
+  if (type === "pattern") return "var(--warning)";
+  return "var(--success)";
+}
+
+function insightTypeBadge(type: CoachingInsight["type"]): string {
+  if (type === "weakness") return "Zwakte";
+  if (type === "pattern") return "Patroon";
+  return "Sterkte";
+}
+
+function insightBadgeColor(type: CoachingInsight["type"]): string {
+  if (type === "weakness") return "var(--danger)";
+  if (type === "pattern") return "var(--warning)";
+  return "var(--success)";
+}
+
+function severityLabel(severity: string): string {
+  const s = severity.toLowerCase();
+  if (s === "high") return "Hoog";
+  if (s === "medium") return "Gemiddeld";
+  if (s === "low") return "Laag";
+  return severity;
 }
 
 // ---- style constants ----
@@ -124,6 +161,28 @@ export default function CoachPage() {
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const [insights, setInsights] = useState<CoachingInsight[]>([]);
+  const [insightsLoading, setInsightsLoading] = useState(false);
+  const [refreshLoading, setRefreshLoading] = useState(false);
+  const [refreshMessage, setRefreshMessage] = useState<string | null>(null);
+
+  const fetchInsights = useCallback(async () => {
+    setInsightsLoading(true);
+    try {
+      const res = await fetch(`${API_URL}/api/coaching/insights`, {
+        credentials: "include",
+      });
+      if (res.ok) {
+        const data: CoachingInsight[] = await res.json();
+        setInsights(data);
+      }
+    } catch {
+      // silently ignore; insights section shows empty state
+    } finally {
+      setInsightsLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     const opts: RequestInit = { credentials: "include" };
 
@@ -143,7 +202,9 @@ export default function CoachPage() {
       })
       .catch((err: Error) => setError(err.message))
       .finally(() => setLoading(false));
-  }, []);
+
+    fetchInsights();
+  }, [fetchInsights]);
 
   async function handleSync() {
     setSyncLoading(true);
@@ -159,6 +220,25 @@ export default function CoachPage() {
       setSyncMessage("Synchronisatie mislukt. Probeer het opnieuw.");
     } finally {
       setSyncLoading(false);
+    }
+  }
+
+  async function handleRefreshInsights() {
+    setRefreshLoading(true);
+    setRefreshMessage(null);
+    try {
+      const res = await fetch(`${API_URL}/api/coaching/refresh`, {
+        method: "POST",
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setRefreshMessage("Inzichten worden gegenereerd...");
+      await fetchInsights();
+      setRefreshMessage(null);
+    } catch {
+      setRefreshMessage("Vernieuwen mislukt. Probeer het opnieuw.");
+    } finally {
+      setRefreshLoading(false);
     }
   }
 
@@ -211,6 +291,103 @@ export default function CoachPage() {
             <div style={kpiLabelStyle}>Totaal partijen</div>
           </div>
         </div>
+      </div>
+
+      {/* AI Coaching insights */}
+      <div style={sectionStyle}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "16px", borderBottom: "1px solid var(--border)", paddingBottom: "8px" }}>
+          <span style={{ fontSize: "13px", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--fg-secondary)" }}>
+            AI Coaching inzichten
+          </span>
+          <button
+            onClick={handleRefreshInsights}
+            disabled={refreshLoading || insightsLoading}
+            style={{
+              background: (refreshLoading || insightsLoading) ? "var(--bg-secondary)" : "var(--bg-secondary)",
+              color: (refreshLoading || insightsLoading) ? "var(--fg-secondary)" : "var(--fg)",
+              border: "1px solid var(--border)",
+              padding: "5px 12px",
+              fontSize: "12px",
+              cursor: (refreshLoading || insightsLoading) ? "not-allowed" : "pointer",
+              fontFamily: "inherit",
+              letterSpacing: "0.02em",
+            }}
+          >
+            {refreshLoading ? "Vernieuwen..." : "Vernieuw inzichten"}
+          </button>
+        </div>
+
+        {refreshMessage && (
+          <p
+            style={{
+              fontSize: "13px",
+              color: refreshMessage.includes("mislukt") ? "var(--danger)" : "var(--fg-secondary)",
+              marginBottom: "12px",
+            }}
+          >
+            {refreshMessage}
+          </p>
+        )}
+
+        {insightsLoading ? (
+          <p style={{ color: "var(--fg-secondary)", fontSize: "14px" }}>Inzichten laden...</p>
+        ) : insights.length === 0 ? (
+          <div
+            style={{
+              background: "var(--bg-secondary)",
+              border: "1px solid var(--border)",
+              padding: "32px",
+              textAlign: "center",
+            }}
+          >
+            <p style={{ color: "var(--fg-secondary)", fontSize: "14px", margin: 0 }}>
+              Nog geen inzichten. Klik &apos;Vernieuw inzichten&apos; om AI-coaching te genereren.
+            </p>
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+            {insights.map((insight) => (
+              <div
+                key={insight.id}
+                style={{
+                  background: "var(--bg-secondary)",
+                  border: "1px solid var(--border)",
+                  borderLeft: `4px solid ${insightBorderColor(insight.type)}`,
+                  padding: "16px 20px",
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "6px" }}>
+                  <span
+                    style={{
+                      fontSize: "11px",
+                      fontWeight: 700,
+                      textTransform: "uppercase",
+                      letterSpacing: "0.06em",
+                      color: insightBadgeColor(insight.type),
+                      border: `1px solid ${insightBadgeColor(insight.type)}`,
+                      padding: "1px 6px",
+                    }}
+                  >
+                    {insightTypeBadge(insight.type)}
+                  </span>
+                  <span style={{ fontSize: "11px", color: "var(--fg-secondary)" }}>
+                    Ernst: {severityLabel(insight.severity)}
+                  </span>
+                </div>
+                <p style={{ fontSize: "15px", fontWeight: 700, margin: "0 0 6px 0" }}>
+                  {insight.title}
+                </p>
+                <p style={{ fontSize: "14px", color: "var(--fg-secondary)", margin: "0 0 10px 0", lineHeight: 1.5 }}>
+                  {insight.description}
+                </p>
+                <p style={{ fontSize: "11px", color: "var(--fg-secondary)", margin: 0, opacity: 0.7 }}>
+                  Gegenereerd door {insight.model_version}
+                  {insight.generated_at ? ` · ${formatDate(insight.generated_at)}` : ""}
+                </p>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Connected accounts */}
@@ -377,32 +554,6 @@ export default function CoachPage() {
             </Link>
           </div>
         )}
-      </div>
-
-      {/* AI Coaching insights placeholder */}
-      <div style={sectionStyle}>
-        <div style={sectionHeaderStyle}>AI Coaching inzichten</div>
-        <div
-          style={{
-            background: "var(--bg-secondary)",
-            border: "1px solid var(--border)",
-            padding: "32px",
-            textAlign: "center",
-          }}
-        >
-          <p
-            style={{
-              fontSize: "16px",
-              fontWeight: 600,
-              marginBottom: "8px",
-            }}
-          >
-            AI Coaching inzichten komen binnenkort...
-          </p>
-          <p style={{ color: "var(--fg-secondary)", fontSize: "14px" }}>
-            Persoonlijke analyse en aanbevelingen op basis van jouw partijen.
-          </p>
-        </div>
       </div>
 
       {/* Action buttons */}
