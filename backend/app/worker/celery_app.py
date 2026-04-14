@@ -5,6 +5,7 @@ celery_app = Celery(
     "chesspa",
     broker=settings.redis_url,
     backend=settings.redis_url,
+    include=["app.worker.tasks"],
 )
 
 celery_app.conf.update(
