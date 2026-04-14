@@ -76,8 +76,18 @@ def analyze_game(game_id: str):
 
 
 async def _analyze_game_async(game_id: str):
+    import io
     import uuid
+
+    import chess
+    import chess.pgn
+
+    from app.analysis.maia import maia_available, open_maia_engine
+    from app.analysis.motifs import detect_geometric_motifs, verify_motifs
+    from app.analysis.positional import extract_features
+
     engine_instance = None
+    maia_engine = None
     engine_db, factory = _get_session_factory()
 
     try:
@@ -94,15 +104,44 @@ async def _analyze_game_async(game_id: str):
             game.analysis_status = "analyzing"
             await db.commit()
 
+            maia_rating = game.user_elo
             try:
                 engine_instance = open_engine()
-                move_results = analyze_game_moves(engine_instance, game.pgn)
+                if settings.enable_maia and maia_available(maia_rating):
+                    try:
+                        maia_engine = open_maia_engine(rating=maia_rating)
+                    except Exception as e:
+                        print(f"Maia init failed; continuing without: {e}")
+                        maia_engine = None
+                move_results = analyze_game_moves(
+                    engine_instance,
+                    game.pgn,
+                    maia_engine=maia_engine,
+                    maia_rating=maia_rating,
+                )
+
+                if settings.enable_motifs:
+                    for mr in move_results:
+                        board = chess.Board(mr["fen"])
+                        geo = detect_geometric_motifs(board)
+                        verified = verify_motifs(engine_instance, board, geo) if geo else []
+                        mr["motifs"] = verified
+                        mr["features"] = extract_features(board)
+                else:
+                    for mr in move_results:
+                        mr["motifs"] = []
+                        mr["features"] = extract_features(chess.Board(mr["fen"]))
             except Exception as e:
                 game.analysis_status = "failed"
                 await db.commit()
                 return {"error": str(e)}
 
             for mr in move_results:
+                details = {
+                    "multipv": mr.get("multipv", []),
+                    "motifs": mr.get("motifs", []),
+                    "features": mr.get("features", {}),
+                }
                 ma = MoveAnalysis(
                     game_id=game.id,
                     move_number=mr["move_number"],
@@ -113,19 +152,31 @@ async def _analyze_game_async(game_id: str):
                     best_move_san=mr["best_move_san"],
                     classification=mr["classification"],
                     fen=mr.get("fen"),
+                    win_percent_before=mr.get("win_percent_before"),
+                    win_percent_after=mr.get("win_percent_after"),
+                    accuracy_percent=mr.get("accuracy_percent"),
+                    is_critical_moment=mr.get("is_critical_moment"),
+                    maia_top1_san=mr.get("maia_top1_san"),
+                    maia_top1_prob=mr.get("maia_top1_prob"),
+                    maia_match_played=mr.get("maia_match_played"),
+                    maia_rating_used=mr.get("maia_rating_used"),
+                    details_json=details,
                 )
                 db.add(ma)
 
-            summary_input = [
-                {
-                    "classification": mr["classification"],
-                    "eval_loss": mr["centipawn_loss"],
-                    "move_number": mr["move_number"],
-                    "total_moves": mr["total_moves"],
-                }
-                for mr in move_results
-            ]
-            summary_data = compute_game_summary(summary_input)
+            # Collect opening SAN moves (first 20 plies) for ECO classification
+            opening_sans: list[str] = []
+            try:
+                pgn_game = chess.pgn.read_game(io.StringIO(game.pgn))
+                if pgn_game is not None:
+                    b = pgn_game.board()
+                    for mv in list(pgn_game.mainline_moves())[:20]:
+                        opening_sans.append(b.san(mv))
+                        b.push(mv)
+            except Exception:
+                opening_sans = []
+
+            summary_data = compute_game_summary(move_results, opening_moves_san=opening_sans)
 
             game_summary = GameSummary(
                 game_id=game.id,
@@ -135,12 +186,17 @@ async def _analyze_game_async(game_id: str):
                 avg_eval_loss=summary_data["avg_eval_loss"],
                 phase_scores=summary_data["phase_scores"],
                 time_trouble=summary_data["time_trouble"],
+                accuracy_white=summary_data.get("accuracy_white"),
+                accuracy_black=summary_data.get("accuracy_black"),
+                opening_eco=summary_data.get("opening_eco"),
+                opening_name=summary_data.get("opening_name"),
+                phase_acpl=summary_data.get("phase_acpl"),
+                motif_counts=summary_data.get("motif_counts"),
             )
             db.add(game_summary)
             game.analysis_status = "done"
             await db.commit()
 
-            # Queue LLM commentary for significant errors
             try:
                 generate_move_commentary_task.delay(str(game.id))
             except Exception:
@@ -208,21 +264,36 @@ async def _generate_move_commentary_async(game_id: str):
             await engine_db.dispose()
             return {"error": "No move analyses found"}
 
-        # Build move dicts for commentary
-        move_dicts = [
-            {
-                "move_number": ma.move_number,
-                "color": ma.color,
-                "move_san": ma.move_san,
-                "best_move_san": ma.best_move_san,
-                "eval_before": ma.eval_before,
-                "eval_after": ma.eval_after,
-                "centipawn_loss": abs(ma.eval_before - ma.eval_after),
-                "fen": ma.fen or "",
-            }
-            for ma in analyses
-            if ma.fen  # skip moves without FEN (pre-migration)
-        ]
+        # Build rich move dicts for CCC commentary
+        move_dicts = []
+        for ma in analyses:
+            if not ma.fen:
+                continue  # skip moves without FEN (pre-migration)
+            details = ma.details_json or {}
+            move_dicts.append(
+                {
+                    "move_number": ma.move_number,
+                    "color": ma.color,
+                    "move_san": ma.move_san,
+                    "best_move_san": ma.best_move_san,
+                    "classification": ma.classification,
+                    "eval_before": ma.eval_before,
+                    "eval_after": ma.eval_after,
+                    "centipawn_loss": abs(ma.eval_before - ma.eval_after),
+                    "win_percent_before": ma.win_percent_before,
+                    "win_percent_after": ma.win_percent_after,
+                    "accuracy_percent": ma.accuracy_percent,
+                    "is_critical_moment": ma.is_critical_moment,
+                    "maia_top1_san": ma.maia_top1_san,
+                    "maia_top1_prob": ma.maia_top1_prob,
+                    "maia_match_played": ma.maia_match_played,
+                    "maia_rating_used": ma.maia_rating_used,
+                    "fen": ma.fen,
+                    "multipv": details.get("multipv", []),
+                    "motifs": details.get("motifs", []),
+                    "features": details.get("features", {}),
+                }
+            )
 
         comments = await generate_move_commentary(move_dicts, game.user_color)
 
