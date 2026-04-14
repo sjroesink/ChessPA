@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     stockfish_path: str = "stockfish"  # Path to Stockfish binary
     stockfish_threads: int = 16
     stockfish_hash_mb: int = 2048
-    stockfish_depth: int = 24
+    stockfish_depth: int = 20
 
     # LLM Provider
     llm_provider: str = "ollama"  # "ollama" or "claude"
