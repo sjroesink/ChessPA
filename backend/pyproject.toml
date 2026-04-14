@@ -13,6 +13,7 @@ dependencies = [
     "cryptography>=44.0.0",
     "python-chess>=1.11.0",
     "python-multipart>=0.0.26",
+    "celery[redis]>=5.4.0",
 ]
 
 [project.optional-dependencies]
