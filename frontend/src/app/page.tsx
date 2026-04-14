@@ -1,6 +1,41 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 export default function LoginPage() {
+  const router = useRouter();
+  const [checking, setChecking] = useState(true);
+
+  useEffect(() => {
+    fetch(`${API_URL}/auth/me`, { credentials: "include" })
+      .then((res) => {
+        if (res.ok) {
+          router.replace("/coach");
+        } else {
+          setChecking(false);
+        }
+      })
+      .catch(() => setChecking(false));
+  }, [router]);
+
+  if (checking) {
+    return (
+      <main
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          minHeight: "100vh",
+        }}
+      >
+        <p style={{ color: "var(--fg-secondary)" }}>Laden...</p>
+      </main>
+    );
+  }
+
   return (
     <main
       style={{
