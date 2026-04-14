@@ -17,7 +17,7 @@ from app.chess_services.pgn_parser import (
     determine_result,
     parse_pgn,
 )
-from app.chess_services.time_control import classify_time_control
+
 from app.models.game import Game
 
 
@@ -58,7 +58,6 @@ async def import_chesscom_game(
     opponent_elo = parsed["black_elo"] if is_white else parsed["white_elo"]
 
     time_control_raw = parsed.get("time_control") or game_data.get("time_control")
-    time_control_class = classify_time_control(time_control_raw)
 
     # Use end_time from game_data if available
     played_at = parsed["played_at"]
@@ -67,7 +66,7 @@ async def import_chesscom_game(
 
     game = Game(
         user_id=user_id,
-        platform="chess.com",
+        platform="chess_com",
         platform_game_id=game_data.get("url"),
         pgn=parsed["pgn"],
         white_username=white_user,
@@ -76,12 +75,12 @@ async def import_chesscom_game(
         result=result,
         opening_name=parsed.get("opening_name"),
         opening_eco=parsed.get("opening_eco"),
-        time_control=time_control_class,
+        time_control=time_control_raw,
         user_elo=user_elo,
         opponent_elo=opponent_elo,
         played_at=played_at,
         move_count=parsed["move_count"],
-        import_source="chess.com",
+        import_source="sync",
         content_hash=content_hash,
     )
     db.add(game)
@@ -149,7 +148,6 @@ async def import_lichess_game(
         tc_str = f"{initial}+{increment}" if increment else str(initial)
     else:
         tc_str = parsed.get("time_control")
-    time_control_class = classify_time_control(tc_str)
 
     # Lichess createdAt is in milliseconds
     played_at = parsed["played_at"]
@@ -169,12 +167,12 @@ async def import_lichess_game(
         result=result,
         opening_name=parsed.get("opening_name") or game_data.get("opening", {}).get("name"),
         opening_eco=parsed.get("opening_eco") or game_data.get("opening", {}).get("eco"),
-        time_control=time_control_class,
+        time_control=tc_str,
         user_elo=user_elo,
         opponent_elo=opponent_elo,
         played_at=played_at,
         move_count=parsed["move_count"],
-        import_source="lichess",
+        import_source="sync",
         content_hash=content_hash,
     )
     db.add(game)
@@ -230,8 +228,6 @@ async def import_pgn_text(
 
         user_elo = parsed["white_elo"] if is_white else parsed["black_elo"]
         opponent_elo = parsed["black_elo"] if is_white else parsed["white_elo"]
-        time_control_class = classify_time_control(parsed.get("time_control"))
-
         game = Game(
             user_id=user_id,
             platform="pgn_upload",
@@ -243,7 +239,7 @@ async def import_pgn_text(
             result=result,
             opening_name=parsed.get("opening_name"),
             opening_eco=parsed.get("opening_eco"),
-            time_control=time_control_class,
+            time_control=parsed.get("time_control"),
             user_elo=user_elo,
             opponent_elo=opponent_elo,
             played_at=parsed["played_at"],

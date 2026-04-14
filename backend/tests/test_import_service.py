@@ -74,16 +74,16 @@ async def test_import_chesscom_game(db_session: AsyncSession, test_user: User):
     await db_session.commit()
 
     assert game is not None
-    assert game.platform == "chess.com"
+    assert game.platform == "chess_com"
     assert game.user_color == "white"
     assert game.result == "win"
     assert game.white_username == "testplayer"
     assert game.black_username == "opponent1"
     assert game.user_elo == 1500
     assert game.opponent_elo == 1400
-    assert game.import_source == "chess.com"
+    assert game.import_source == "sync"
     assert game.content_hash is not None
-    assert game.time_control == "rapid"
+    assert game.time_control == "600"
     assert game.opening_eco == "B20"
 
 
@@ -126,9 +126,9 @@ async def test_import_lichess_game(db_session: AsyncSession, test_user: User):
     assert game.platform == "lichess"
     assert game.user_color == "white"
     assert game.result == "win"
-    assert game.import_source == "lichess"
+    assert game.import_source == "sync"
     assert game.platform_game_id == "abc12345"
-    assert game.time_control == "rapid"
+    assert game.time_control == "600"
 
 
 @pytest.mark.asyncio
