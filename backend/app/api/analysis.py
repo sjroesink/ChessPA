@@ -53,6 +53,17 @@ async def get_analysis(
                 "classification": m.classification,
                 "fen": m.fen,
                 "comment": m.comment,
+                "win_percent_before": m.win_percent_before,
+                "win_percent_after": m.win_percent_after,
+                "accuracy_percent": m.accuracy_percent,
+                "is_critical_moment": m.is_critical_moment,
+                "maia": {
+                    "top1_san": m.maia_top1_san,
+                    "top1_prob": m.maia_top1_prob,
+                    "match_played": m.maia_match_played,
+                    "rating_used": m.maia_rating_used,
+                },
+                "details": m.details_json or {},
             }
             for m in moves
         ],
@@ -63,5 +74,11 @@ async def get_analysis(
             "avg_eval_loss": summary.avg_eval_loss,
             "phase_scores": summary.phase_scores,
             "time_trouble": summary.time_trouble,
+            "accuracy_white": summary.accuracy_white,
+            "accuracy_black": summary.accuracy_black,
+            "opening_eco": summary.opening_eco,
+            "opening_name": summary.opening_name,
+            "phase_acpl": summary.phase_acpl,
+            "motif_counts": summary.motif_counts,
         } if summary else None,
     }
