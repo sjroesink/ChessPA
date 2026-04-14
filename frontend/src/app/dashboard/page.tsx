@@ -78,7 +78,7 @@ const kpiLabelStyle: React.CSSProperties = {
 
 function formatPct(val: number | null): string {
   if (val === null || val === undefined) return "-";
-  return `${Math.round(val * 100)}%`;
+  return `${Math.round(val)}%`;
 }
 
 function formatNum(val: number | null): string {

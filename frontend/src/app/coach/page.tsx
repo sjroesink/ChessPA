@@ -27,10 +27,10 @@ interface StatsOverview {
 
 interface Game {
   id: number;
-  white: string;
-  black: string;
+  white_username: string;
+  black_username: string;
   user_color: "white" | "black";
-  result: string;
+  result: string; // "win" | "loss" | "draw"
   opening_name: string;
   time_category: string;
   user_elo: number;
@@ -57,24 +57,21 @@ interface CoachingInsight {
 
 function formatNum(val: number | null | undefined): string {
   if (val === null || val === undefined) return "-";
-  return val.toLocaleString("nl-NL");
+  return String(val);
 }
 
 function formatPct(val: number | null | undefined): string {
   if (val === null || val === undefined) return "-";
-  return `${Math.round(val * 100)}%`;
+  return `${Math.round(val)}%`;
 }
 
 function getOpponent(game: Game): string {
-  return game.user_color === "white" ? game.black : game.white;
+  return game.user_color === "white" ? game.black_username : game.white_username;
 }
 
 function getResultLabel(game: Game): { label: string; color: string } {
-  const isWhite = game.user_color === "white";
-  if (game.result === "1/2-1/2") return { label: "Remise", color: "var(--fg-secondary)" };
-  if ((isWhite && game.result === "1-0") || (!isWhite && game.result === "0-1")) {
-    return { label: "Winst", color: "var(--success)" };
-  }
+  if (game.result === "draw") return { label: "Remise", color: "var(--fg-secondary)" };
+  if (game.result === "win") return { label: "Winst", color: "var(--success)" };
   return { label: "Verlies", color: "var(--danger)" };
 }
 
