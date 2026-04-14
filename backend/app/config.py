@@ -13,6 +13,12 @@ class Settings(BaseSettings):
     frontend_url: str = "http://localhost:3000"
     encryption_key: str = ""
 
+    # Stockfish
+    stockfish_path: str = "stockfish"  # Path to Stockfish binary
+    stockfish_threads: int = 2
+    stockfish_hash_mb: int = 256
+    stockfish_depth: int = 20
+
     # LLM Provider
     llm_provider: str = "claude"  # "claude" or "ollama"
     anthropic_api_key: str = ""

@@ -62,7 +62,11 @@ def _score_to_cp(score: chess.engine.PovScore, turn: chess.Color) -> float:
     return float(relative.score(mate_score=10000))
 
 
-def open_engine(path: str = "stockfish", threads: int = 2, hash_mb: int = 256) -> chess.engine.SimpleEngine:
-    engine = chess.engine.SimpleEngine.popen_uci(path)
-    engine.configure({"Threads": threads, "Hash": hash_mb})
+def open_engine(path: str | None = None, threads: int | None = None, hash_mb: int | None = None) -> chess.engine.SimpleEngine:
+    from app.config import settings
+    engine = chess.engine.SimpleEngine.popen_uci(path or settings.stockfish_path)
+    engine.configure({
+        "Threads": threads or settings.stockfish_threads,
+        "Hash": hash_mb or settings.stockfish_hash_mb,
+    })
     return engine
