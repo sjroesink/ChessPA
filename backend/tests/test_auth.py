@@ -2,6 +2,7 @@ import uuid
 from unittest.mock import AsyncMock, patch
 
 from app.auth.dependencies import set_session, _sessions
+from app.models.user import User
 
 
 async def test_me_unauthenticated(client):
@@ -9,27 +10,9 @@ async def test_me_unauthenticated(client):
     assert response.status_code == 401
 
 
-async def test_me_authenticated(client, app):
+async def test_me_authenticated(client, app, test_db_factory, override_db):
     """Test /auth/me with a valid session."""
-    from app.database import get_db
-    from app.models.user import User
-    from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
-    from app.models import Base
-    from app.config import settings
-
-    engine = create_async_engine(settings.database_url)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-
-    session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-
-    async def override_get_db():
-        async with session_factory() as session:
-            yield session
-
-    app.dependency_overrides[get_db] = override_get_db
-
-    async with session_factory() as db:
+    async with test_db_factory() as db:
         user = User(username="testplayer", auth_provider="google", email="test@example.com")
         db.add(user)
         await db.commit()
@@ -49,11 +32,6 @@ async def test_me_authenticated(client, app):
     assert data["id"] == str(user_id)
     assert data["email"] == "test@example.com"
     assert data["auth_provider"] == "google"
-
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
-    await engine.dispose()
-    app.dependency_overrides.clear()
 
 
 async def test_lichess_login_redirects(client):

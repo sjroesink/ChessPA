@@ -1,9 +1,6 @@
 import uuid
 from datetime import datetime, timezone
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
-from app.config import settings
-from app.database import get_db
-from app.models import Base
+
 from app.models.user import User
 from app.models.game import Game
 from app.models.move_analysis import MoveAnalysis
@@ -11,18 +8,8 @@ from app.models.game_summary import GameSummary
 from app.auth.dependencies import set_session
 
 
-async def _setup(app):
-    engine = create_async_engine(settings.database_url)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-
-    async def override():
-        async with factory() as s:
-            yield s
-    app.dependency_overrides[get_db] = override
-
-    async with factory() as db:
+async def _setup(test_db_factory):
+    async with test_db_factory() as db:
         user = User(username="analyst", auth_provider="google", email="analysis@test.com")
         db.add(user)
         await db.commit()
@@ -56,18 +43,11 @@ async def _setup(app):
         await db.commit()
 
     set_session("analysis-test", user.id)
-    return engine, user, game
+    return user, game
 
 
-async def _cleanup(engine, app):
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
-    await engine.dispose()
-    app.dependency_overrides.clear()
-
-
-async def test_get_analysis(client, app):
-    engine, user, game = await _setup(app)
+async def test_get_analysis(client, app, test_db_factory, override_db):
+    user, game = await _setup(test_db_factory)
     response = await client.get(
         f"/api/games/{game.id}/analysis",
         cookies={"chesspa_session": "analysis-test"},
@@ -78,15 +58,13 @@ async def test_get_analysis(client, app):
     assert data["summary"]["avg_eval_loss"] == 5.0
     assert len(data["moves"]) == 1
     assert data["moves"][0]["move_san"] == "e4"
-    await _cleanup(engine, app)
 
 
-async def test_get_analysis_not_found(client, app):
-    engine, user, game = await _setup(app)
+async def test_get_analysis_not_found(client, app, test_db_factory, override_db):
+    user, game = await _setup(test_db_factory)
     fake_id = str(uuid.uuid4())
     response = await client.get(
         f"/api/games/{fake_id}/analysis",
         cookies={"chesspa_session": "analysis-test"},
     )
     assert response.status_code == 404
-    await _cleanup(engine, app)

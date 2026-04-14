@@ -1,16 +1,13 @@
 import uuid
 
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.chess_services.import_service import (
     import_chesscom_game,
     import_lichess_game,
     import_pgn_text,
 )
-from app.config import settings
-from app.models import Base
 from app.models.user import User
 
 SAMPLE_PGN = """[Event "Live Chess"]
@@ -51,20 +48,8 @@ SAMPLE_LICHESS_GAME = {
 
 
 @pytest.fixture
-async def db_engine():
-    engine = create_async_engine(settings.database_url)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    yield engine
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
-    await engine.dispose()
-
-
-@pytest.fixture
-async def db_session(db_engine):
-    async_session = sessionmaker(db_engine, class_=AsyncSession, expire_on_commit=False)
-    async with async_session() as session:
+async def db_session(test_db_factory):
+    async with test_db_factory() as session:
         yield session
 
 

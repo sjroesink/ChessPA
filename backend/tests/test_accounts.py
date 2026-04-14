@@ -1,50 +1,18 @@
 import uuid
 from unittest.mock import AsyncMock, patch, MagicMock
 
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
-
-from app.config import settings
-from app.database import get_db
-from app.models import Base
 from app.models.user import User
 from app.models.connected_account import ConnectedAccount
-from app.auth.dependencies import set_session, get_current_user
+from app.auth.dependencies import set_session
 
 
-async def _setup_db(app):
-    engine = create_async_engine(settings.database_url)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-
-    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-
-    async def override():
-        async with factory() as s:
-            yield s
-
-    app.dependency_overrides[get_db] = override
-    return engine, factory
-
-
-async def _create_user(factory, username="testplayer"):
-    async with factory() as db:
-        user = User(username=username)
+async def test_connect_chess_com(client, app, test_db_factory, override_db):
+    async with test_db_factory() as db:
+        user = User(username="testplayer")
         db.add(user)
         await db.commit()
         await db.refresh(user)
-        return user
 
-
-async def _cleanup(engine, app):
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
-    await engine.dispose()
-    app.dependency_overrides.clear()
-
-
-async def test_connect_chess_com(client, app):
-    engine, factory = await _setup_db(app)
-    user = await _create_user(factory)
     set_session("s1", user.id)
 
     mock_response = MagicMock()
@@ -69,12 +37,14 @@ async def test_connect_chess_com(client, app):
     assert data["platform"] == "chess_com"
     assert data["username"] == "testplayer"
 
-    await _cleanup(engine, app)
 
+async def test_connect_chess_com_not_found(client, app, test_db_factory, override_db):
+    async with test_db_factory() as db:
+        user = User(username="testplayer")
+        db.add(user)
+        await db.commit()
+        await db.refresh(user)
 
-async def test_connect_chess_com_not_found(client, app):
-    engine, factory = await _setup_db(app)
-    user = await _create_user(factory)
     set_session("s2", user.id)
 
     mock_response = MagicMock()
@@ -95,14 +65,15 @@ async def test_connect_chess_com_not_found(client, app):
 
     assert response.status_code == 404
 
-    await _cleanup(engine, app)
 
+async def test_toggle_auto_sync(client, app, test_db_factory, override_db):
+    async with test_db_factory() as db:
+        user = User(username="testplayer")
+        db.add(user)
+        await db.commit()
+        await db.refresh(user)
 
-async def test_toggle_auto_sync(client, app):
-    engine, factory = await _setup_db(app)
-    user = await _create_user(factory)
-
-    async with factory() as db:
+    async with test_db_factory() as db:
         account = ConnectedAccount(
             user_id=user.id,
             platform="chess_com",
@@ -122,5 +93,3 @@ async def test_toggle_auto_sync(client, app):
     )
     assert response.status_code == 200
     assert response.json()["auto_sync"] is False
-
-    await _cleanup(engine, app)

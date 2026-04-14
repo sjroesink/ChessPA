@@ -1,29 +1,9 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
-
-from app.config import settings
-from app.database import get_db
-from app.models import Base
 from app.models.user import User
 from app.models.game import Game
 from app.auth.dependencies import set_session
-
-
-async def _setup_db(app):
-    engine = create_async_engine(settings.database_url)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-
-    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-
-    async def override():
-        async with factory() as s:
-            yield s
-
-    app.dependency_overrides[get_db] = override
-    return engine, factory
 
 
 async def _create_user(factory):
@@ -68,17 +48,9 @@ async def _create_game(factory, user_id, **overrides):
         return game
 
 
-async def _cleanup(engine, app):
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
-    await engine.dispose()
-    app.dependency_overrides.clear()
-
-
-async def test_list_games(client, app):
-    engine, factory = await _setup_db(app)
-    user = await _create_user(factory)
-    game = await _create_game(factory, user.id)
+async def test_list_games(client, app, test_db_factory, override_db):
+    user = await _create_user(test_db_factory)
+    game = await _create_game(test_db_factory, user.id)
     set_session("g1", user.id)
 
     response = await client.get(
@@ -94,13 +66,10 @@ async def test_list_games(client, app):
     assert data["games"][0]["result"] == "win"
     assert data["games"][0]["time_category"] == "blitz"
 
-    await _cleanup(engine, app)
 
-
-async def test_list_games_filter_result(client, app):
-    engine, factory = await _setup_db(app)
-    user = await _create_user(factory)
-    await _create_game(factory, user.id, result="win")
+async def test_list_games_filter_result(client, app, test_db_factory, override_db):
+    user = await _create_user(test_db_factory)
+    await _create_game(test_db_factory, user.id, result="win")
     set_session("g2", user.id)
 
     response = await client.get(
@@ -112,13 +81,10 @@ async def test_list_games_filter_result(client, app):
     assert data["total"] == 0
     assert len(data["games"]) == 0
 
-    await _cleanup(engine, app)
 
-
-async def test_game_detail(client, app):
-    engine, factory = await _setup_db(app)
-    user = await _create_user(factory)
-    game = await _create_game(factory, user.id)
+async def test_game_detail(client, app, test_db_factory, override_db):
+    user = await _create_user(test_db_factory)
+    game = await _create_game(test_db_factory, user.id)
     set_session("g3", user.id)
 
     response = await client.get(
@@ -132,12 +98,9 @@ async def test_game_detail(client, app):
     assert data["import_source"] == "chess.com"
     assert data["opening_name"] == "Italian Game"
 
-    await _cleanup(engine, app)
 
-
-async def test_game_detail_not_found(client, app):
-    engine, factory = await _setup_db(app)
-    user = await _create_user(factory)
+async def test_game_detail_not_found(client, app, test_db_factory, override_db):
+    user = await _create_user(test_db_factory)
     set_session("g4", user.id)
 
     fake_id = str(uuid.uuid4())
@@ -146,8 +109,6 @@ async def test_game_detail_not_found(client, app):
         cookies={"chesspa_session": "g4"},
     )
     assert response.status_code == 404
-
-    await _cleanup(engine, app)
 
 
 async def test_list_games_unauthorized(client, app):
