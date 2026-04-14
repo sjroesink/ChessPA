@@ -251,6 +251,10 @@ export default function SettingsPage() {
   const [syncing, setSyncing] = useState(false);
   const [syncFeedback, setSyncFeedback] = useState<{ ok: boolean; msg: string } | null>(null);
 
+  // Analyse
+  const [analyzing, setAnalyzing] = useState(false);
+  const [analyzeFeedback, setAnalyzeFeedback] = useState<{ ok: boolean; msg: string } | null>(null);
+
   useEffect(() => {
     fetch(`${API_URL}/auth/me`, { credentials: "include" })
       .then((res) => {
@@ -366,6 +370,31 @@ export default function SettingsPage() {
       setSyncFeedback({ ok: false, msg: "Netwerkfout bij synchroniseren." });
     } finally {
       setSyncing(false);
+    }
+  }
+
+  async function handleAnalyze() {
+    setAnalyzing(true);
+    setAnalyzeFeedback(null);
+    try {
+      const res = await fetch(`${API_URL}/api/games/analyze-all`, {
+        method: "POST",
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        setAnalyzeFeedback({ ok: false, msg: (err as { detail?: string }).detail ?? "Analyse mislukt." });
+        return;
+      }
+      const data = await res.json();
+      setAnalyzeFeedback({
+        ok: true,
+        msg: `${data.queued} ${data.queued === 1 ? "partij" : "partijen"} in de wachtrij voor analyse.`,
+      });
+    } catch {
+      setAnalyzeFeedback({ ok: false, msg: "Netwerkfout bij analyse." });
+    } finally {
+      setAnalyzing(false);
     }
   }
 
@@ -491,6 +520,24 @@ export default function SettingsPage() {
         </button>
         {syncFeedback && (
           <div style={feedbackStyle(syncFeedback.ok)}>{syncFeedback.msg}</div>
+        )}
+      </div>
+
+      {/* ── 5. Stockfish analyse ── */}
+      <div style={sectionStyle}>
+        <div style={sectionHeaderStyle as React.CSSProperties}>Stockfish analyse</div>
+        <p style={{ fontSize: "14px", color: "var(--fg-secondary)", marginBottom: "12px" }}>
+          Analyseer alle partijen die nog niet geanalyseerd zijn met Stockfish.
+        </p>
+        <button
+          onClick={handleAnalyze}
+          disabled={analyzing}
+          style={{ ...btnPrimaryStyle, ...(analyzing ? btnDisabledStyle : {}) }}
+        >
+          {analyzing ? "Bezig..." : "Analyseer alle partijen"}
+        </button>
+        {analyzeFeedback && (
+          <div style={feedbackStyle(analyzeFeedback.ok)}>{analyzeFeedback.msg}</div>
         )}
       </div>
     </main>

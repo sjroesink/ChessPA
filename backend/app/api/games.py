@@ -181,3 +181,29 @@ async def import_pgn(
         "imported": len(games),
         "game_ids": [str(g.id) for g in games],
     }
+
+
+@router.post("/analyze-all")
+async def analyze_all_games(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Queue Stockfish analysis for all unanalyzed games."""
+    result = await db.execute(
+        select(Game).where(
+            Game.user_id == user.id,
+            Game.analysis_status == "pending",
+        )
+    )
+    games = result.scalars().all()
+
+    queued = 0
+    for game in games:
+        try:
+            from app.worker.tasks import analyze_game
+            analyze_game.delay(str(game.id))
+            queued += 1
+        except Exception:
+            pass
+
+    return {"queued": queued, "total_pending": len(games)}
