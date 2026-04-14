@@ -105,6 +105,33 @@ async def _analyze_game_async(game_id: str):
             await db.commit()
 
             maia_rating = game.user_elo
+            progress_key = f"analysis:progress:{game.id}"
+            try:
+                import redis as _redis
+
+                _prog = _redis.from_url(settings.redis_url, decode_responses=True)
+            except Exception:
+                _prog = None
+
+            def _report(ply: int, total: int, move_number: int, color: str, san: str) -> None:
+                label = f"{move_number}.{'' if color == 'white' else '..'}{san}"
+                print(f"[analyze] ply {ply + 1}/{total} {color} {label}")
+                if _prog is not None:
+                    try:
+                        _prog.hset(
+                            progress_key,
+                            mapping={
+                                "ply": ply + 1,
+                                "total_plies": total,
+                                "move_number": move_number,
+                                "color": color,
+                                "move_san": san,
+                            },
+                        )
+                        _prog.expire(progress_key, 3600)
+                    except Exception:
+                        pass
+
             try:
                 engine_instance = open_engine()
                 if settings.enable_maia and maia_available(maia_rating):
@@ -118,6 +145,7 @@ async def _analyze_game_async(game_id: str):
                     game.pgn,
                     maia_engine=maia_engine,
                     maia_rating=maia_rating,
+                    progress_cb=_report,
                 )
 
                 if settings.enable_motifs:
@@ -196,6 +224,12 @@ async def _analyze_game_async(game_id: str):
             db.add(game_summary)
             game.analysis_status = "done"
             await db.commit()
+
+            if _prog is not None:
+                try:
+                    _prog.delete(progress_key)
+                except Exception:
+                    pass
 
             try:
                 generate_move_commentary_task.delay(str(game.id))

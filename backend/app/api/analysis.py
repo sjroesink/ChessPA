@@ -1,9 +1,11 @@
 import uuid
 
+import redis
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.database import get_db
 from app.models.user import User
 from app.models.game import Game
@@ -12,6 +14,31 @@ from app.models.game_summary import GameSummary
 from app.auth.dependencies import get_current_user
 
 router = APIRouter(tags=["analysis"])
+
+_redis = redis.from_url(settings.redis_url, decode_responses=True)
+
+
+@router.get("/api/games/{game_id}/analysis/progress")
+async def get_analysis_progress(
+    game_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(Game).where(Game.id == uuid.UUID(game_id), Game.user_id == user.id)
+    )
+    game = result.scalar_one_or_none()
+    if game is None:
+        raise HTTPException(status_code=404, detail="Game not found")
+    data = _redis.hgetall(f"analysis:progress:{game_id}") or {}
+    return {
+        "status": game.analysis_status,
+        "ply": int(data["ply"]) if data.get("ply") else None,
+        "total_plies": int(data["total_plies"]) if data.get("total_plies") else None,
+        "move_number": int(data["move_number"]) if data.get("move_number") else None,
+        "color": data.get("color"),
+        "move_san": data.get("move_san"),
+    }
 
 
 @router.get("/api/games/{game_id}/analysis")

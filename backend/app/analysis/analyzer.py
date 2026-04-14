@@ -20,8 +20,13 @@ def analyze_game_moves(
     maia_engine=None,
     maia_rating: int | None = None,
     depth: int | None = None,
+    progress_cb=None,
 ) -> list[dict]:
-    """Produce a rich per-move fact dict for every ply of the game."""
+    """Produce a rich per-move fact dict for every ply of the game.
+
+    `progress_cb(ply_index, total_plies, move_number, color, move_san)` is invoked
+    before each ply's Stockfish call so callers can surface live progress.
+    """
     if depth is None:
         depth = settings.stockfish_depth
     game = chess.pgn.read_game(io.StringIO(pgn_text))
@@ -30,7 +35,8 @@ def analyze_game_moves(
 
     board = game.board()
     moves = list(game.mainline_moves())
-    total_moves = (len(moves) + 1) // 2
+    total_plies = len(moves)
+    total_moves = (total_plies + 1) // 2
     results: list[dict] = []
 
     for i, move in enumerate(moves):
@@ -38,12 +44,19 @@ def analyze_game_moves(
         color = "white" if i % 2 == 0 else "black"
         fen_before = board.fen()
 
+        upcoming_san = board.san(move)
+        if progress_cb is not None:
+            try:
+                progress_cb(i, total_plies, move_number, color, upcoming_san)
+            except Exception:
+                pass
+
         before = analyze_multipv(engine, board, depth=depth, multipv=settings.multipv_count)
         if not before.multipv:
             board.push(move)
             continue
 
-        move_san = board.san(move)
+        move_san = upcoming_san
         move_uci = move.uci()
         eval_before = before.multipv[0].eval_cp
         best_san = before.multipv[0].san
