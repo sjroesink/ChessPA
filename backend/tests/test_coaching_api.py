@@ -58,3 +58,22 @@ async def test_get_insight_not_found(client, app, test_db_factory, override_db):
         cookies={"chesspa_session": "coaching-test"},
     )
     assert response.status_code == 404
+
+
+async def test_weaknesses_empty_for_new_user(client, app, test_db_factory, override_db):
+    async with test_db_factory() as db:
+        user = User(username="weak_empty", auth_provider="google", email="weak@test.com")
+        db.add(user)
+        await db.commit()
+        await db.refresh(user)
+    set_session("weak-empty-test", user.id)
+    response = await client.get(
+        "/api/coaching/weaknesses",
+        cookies={"chesspa_session": "weak-empty-test"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["games_analyzed"] == 0
+    assert data["per_opening"] == []
+    assert data["per_phase"] == {}
+    assert data["top_motifs"] == []
