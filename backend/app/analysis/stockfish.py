@@ -1,6 +1,6 @@
 import chess
 import chess.engine
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -10,6 +10,65 @@ class MoveEval:
     eval_after: float
     best_move_san: str
     centipawn_loss: float
+
+
+@dataclass
+class PVLine:
+    rank: int
+    san: str
+    uci: str
+    eval_cp: float
+    pv_san: list[str]
+
+
+@dataclass
+class MultiPVResult:
+    fen: str
+    turn: str  # "white" | "black" — side to move in analysed position
+    multipv: list[PVLine] = field(default_factory=list)
+
+
+def analyze_multipv(
+    engine: chess.engine.SimpleEngine,
+    board: chess.Board,
+    depth: int = 20,
+    multipv: int = 3,
+) -> MultiPVResult:
+    """Analyse a position and return up to `multipv` principal variations.
+
+    Each PVLine holds rank (1-based), best SAN, UCI, eval in cp (STM perspective),
+    and the PV as SAN sequence (up to 8 plies).
+    """
+    infos = engine.analyse(board, chess.engine.Limit(depth=depth), multipv=multipv)
+    lines: list[PVLine] = []
+    for info in infos:
+        pv_moves = info.get("pv", [])
+        if not pv_moves:
+            continue
+        best = pv_moves[0]
+        clone = board.copy(stack=False)
+        pv_sans: list[str] = []
+        for mv in pv_moves[:8]:
+            try:
+                pv_sans.append(clone.san(mv))
+                clone.push(mv)
+            except (AssertionError, ValueError):
+                break
+        lines.append(
+            PVLine(
+                rank=info.get("multipv", 1),
+                san=board.san(best),
+                uci=best.uci(),
+                eval_cp=_score_to_cp(info["score"], board.turn),
+                pv_san=pv_sans,
+            )
+        )
+    lines.sort(key=lambda l: l.rank)
+    return MultiPVResult(
+        fen=board.fen(),
+        turn="white" if board.turn == chess.WHITE else "black",
+        multipv=lines,
+    )
 
 
 def analyze_position(
