@@ -19,7 +19,41 @@ import chess.engine
 
 from app.config import settings
 
-MAIA_RATINGS = [1100, 1300, 1500, 1700, 1900]
+def _resolve_weights_dir() -> Path:
+    """Resolve settings.maia_weights_dir to an existing directory (absolute or relative-to-project)."""
+    from pathlib import Path as _Path
+
+    p = _Path(settings.maia_weights_dir)
+    if p.is_absolute():
+        return p
+    candidates = [
+        p,
+        _Path.cwd() / p,
+        _Path(__file__).resolve().parents[3] / p,  # project root
+        _Path(__file__).resolve().parents[2] / p.name,  # backend/<name>
+    ]
+    for c in candidates:
+        if c.exists():
+            return c
+    return p  # fallback (may not exist)
+
+
+def _discover_ratings() -> list[int]:
+    """Discover available Maia rating buckets from filenames in the weights dir."""
+    import re as _re
+
+    d = _resolve_weights_dir()
+    if not d.exists():
+        return [1100, 1300, 1500, 1700, 1900]  # sensible default when no weights yet
+    found: list[int] = []
+    for p in d.glob("maia-*.pb.gz"):
+        m = _re.match(r"maia-(\d+)\.pb\.gz", p.name)
+        if m:
+            found.append(int(m.group(1)))
+    return sorted(found) or [1100, 1300, 1500, 1700, 1900]
+
+
+MAIA_RATINGS = _discover_ratings()
 
 
 @dataclass
@@ -41,8 +75,9 @@ class MaiaPrediction:
 def pick_maia_weight(user_rating: int | None) -> tuple[Path, int]:
     """Return (weight_path, bucket_rating) nearest to user_rating; fallback = default."""
     rating = user_rating if user_rating is not None else settings.maia_default_rating
-    bucket = min(MAIA_RATINGS, key=lambda r: abs(r - rating))
-    weight = Path(settings.maia_weights_dir) / f"maia-{bucket}.pb.gz"
+    ratings = _discover_ratings()
+    bucket = min(ratings, key=lambda r: abs(r - rating))
+    weight = _resolve_weights_dir() / f"maia-{bucket}.pb.gz"
     return weight, bucket
 
 
