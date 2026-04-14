@@ -23,3 +23,6 @@ backend/.env
 # Claude / Playwright tool state
 .claude/
 .playwright-mcp/
+
+# Maia weight files (downloaded separately)
+backend/engines/maia/*.pb.gz
