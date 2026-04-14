@@ -13,6 +13,13 @@ class Settings(BaseSettings):
     frontend_url: str = "http://localhost:3000"
     encryption_key: str = ""
 
+    # LLM Provider
+    llm_provider: str = "claude"  # "claude" or "ollama"
+    anthropic_api_key: str = ""
+    anthropic_model: str = "claude-sonnet-4-6"
+    ollama_base_url: str = "http://localhost:11434"
+    ollama_model: str = "llama3.1"
+
     model_config = {"env_prefix": "CHESSPA_", "env_file": ".env"}
 
 
