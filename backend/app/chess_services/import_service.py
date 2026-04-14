@@ -6,6 +6,12 @@ import chess.pgn
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+try:
+    from app.worker.tasks import analyze_game as analyze_game_task
+    _celery_available = True
+except Exception:
+    _celery_available = False
+
 from app.chess_services.pgn_parser import (
     compute_content_hash,
     determine_result,
@@ -80,6 +86,11 @@ async def import_chesscom_game(
     )
     db.add(game)
     await db.flush()
+    if _celery_available:
+        try:
+            analyze_game_task.delay(str(game.id))
+        except Exception:
+            pass  # Don't fail import if Celery/Redis is down
     return game
 
 
@@ -168,6 +179,11 @@ async def import_lichess_game(
     )
     db.add(game)
     await db.flush()
+    if _celery_available:
+        try:
+            analyze_game_task.delay(str(game.id))
+        except Exception:
+            pass  # Don't fail import if Celery/Redis is down
     return game
 
 
@@ -237,6 +253,11 @@ async def import_pgn_text(
         )
         db.add(game)
         await db.flush()
+        if _celery_available:
+            try:
+                analyze_game_task.delay(str(game.id))
+            except Exception:
+                pass  # Don't fail import if Celery/Redis is down
         imported.append(game)
 
     return imported
