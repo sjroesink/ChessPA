@@ -33,6 +33,9 @@ class Game(Base):
     import_source: Mapped[str] = mapped_column(String(20))
     content_hash: Mapped[str] = mapped_column(String(64), unique=True)
     analysis_status: Mapped[str] = mapped_column(String(20), default="pending")
+    # Game-level progressive stage indicator for quick UI surfacing (games list chip).
+    # Values: "none" | "shallow" | "standard" | "deep"
+    analysis_stage: Mapped[str | None] = mapped_column(String(10), nullable=True)
 
     def __init__(self, **kwargs):
         if "analysis_status" not in kwargs:

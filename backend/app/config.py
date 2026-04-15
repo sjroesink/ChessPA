@@ -44,6 +44,15 @@ class Settings(BaseSettings):
     multipv_count: int = 3
     critical_moment_cp_gap: int = 150  # PV1 vs PV2 threshold (cp) for "only-move" flag
 
+    # Progressive per-stage analysis
+    analysis_engine_pool_size: int = 3
+    analysis_shallow_depth: int = 10
+    analysis_shallow_time_budget_ms: int = 200
+    analysis_standard_target_depth: int = 18
+    analysis_standard_time_budget_ms: int = 1500
+    analysis_deep_target_depth: int = 24
+    analysis_deep_time_budget_ms: int = 5000
+
     # Opening book (Lichess CC0)
     opening_book_path: str = "backend/data/openings.tsv"
 

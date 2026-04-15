@@ -43,4 +43,8 @@ class MoveAnalysis(Base):
     # }
     details_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
+    # Progressive analysis: list of stages already computed for this ply.
+    # Values are from app.analysis.stages.ALL_STAGES: "shallow","standard","deep","enrich"
+    completed_stages: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+
     game = relationship("Game", back_populates="move_analyses")

@@ -88,15 +88,18 @@ def maia_available(user_rating: int | None = None) -> bool:
 
 def open_maia_engine(rating: int | None = None) -> chess.engine.SimpleEngine:
     """Launch lc0 with the chosen Maia weight file on CUDA (or fallback backend)."""
+    import shutil as _shutil
+
     weight, _bucket = pick_maia_weight(rating)
     if not weight.exists():
         raise FileNotFoundError(f"Maia weight missing: {weight}")
+    lc0_bin = _shutil.which(settings.lc0_path) or settings.lc0_path
+    # lc0 v0.32+ removed --no-smart-pruning; policy head already dominates at nodes=1
     engine = chess.engine.SimpleEngine.popen_uci(
         [
-            settings.lc0_path,
+            lc0_bin,
             f"--weights={weight}",
             "--backend=cuda-fp16",
-            "--no-smart-pruning",
         ]
     )
     try:
