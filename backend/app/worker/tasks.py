@@ -70,27 +70,37 @@ async def _sync_all_accounts_async():
 
 
 @celery_app.task(name="app.worker.tasks.analyze_game")
-def analyze_game(game_id: str):
-    """Analyze a single game with Stockfish and persist results."""
-    return asyncio.run(_analyze_game_async(game_id))
+def analyze_game(game_id: str, stages: list[str] | None = None):
+    """Progressive shallow-scan of a game (fast background pass).
+
+    Default: run only the "shallow" stage so the games-list + dashboard pick
+    up eval/accuracy within seconds. Deeper stages are computed on-demand by
+    the WebSocket path when the user opens the game.
+    """
+    return asyncio.run(_analyze_game_async(game_id, stages=stages or ["shallow"]))
 
 
-async def _analyze_game_async(game_id: str):
+async def _analyze_game_async(game_id: str, stages: list[str]):
     import io
     import uuid
 
     import chess
     import chess.pgn
 
-    from app.analysis.maia import maia_available, open_maia_engine
-    from app.analysis.motifs import detect_geometric_motifs, verify_motifs
-    from app.analysis.positional import extract_features
+    from app.analysis.engine_pool import EnginePool
+    from app.analysis.pipeline import AnalysisSession
+    from app.analysis.stages import StageName  # noqa: F401
 
-    engine_instance = None
-    maia_engine = None
     engine_db, factory = _get_session_factory()
+    pool = EnginePool(
+        size=1,
+        engine_path=settings.stockfish_path,
+        threads=settings.stockfish_threads,
+        hash_mb=settings.stockfish_hash_mb,
+    )
 
     try:
+        await pool.start()
         async with factory() as db:
             result = await db.execute(
                 select(Game).where(Game.id == uuid.UUID(game_id))
@@ -98,101 +108,54 @@ async def _analyze_game_async(game_id: str):
             game = result.scalar_one_or_none()
             if game is None:
                 return {"error": "Game not found"}
-            if game.analysis_status == "done":
-                return {"status": "already_analyzed"}
+
+            # Respect WebSocket ownership: if a live session holds focus, skip.
+            import redis as _redis
+
+            r = _redis.from_url(settings.redis_url, decode_responses=True)
+            lock_key = f"analysis:focus:{game_id}"
+            if r.exists(lock_key):
+                return {"status": "skipped_live_session_active"}
 
             game.analysis_status = "analyzing"
             await db.commit()
 
-            maia_rating = game.user_elo
-            progress_key = f"analysis:progress:{game.id}"
-            try:
-                import redis as _redis
-
-                _prog = _redis.from_url(settings.redis_url, decode_responses=True)
-            except Exception:
-                _prog = None
-
-            def _report(ply: int, total: int, move_number: int, color: str, san: str) -> None:
+            def _logger(ply: int, total: int, move_number: int, color: str, san: str) -> None:
                 label = f"{move_number}.{'' if color == 'white' else '..'}{san}"
-                print(f"[analyze] ply {ply + 1}/{total} {color} {label}")
-                if _prog is not None:
-                    try:
-                        _prog.hset(
-                            progress_key,
-                            mapping={
-                                "ply": ply + 1,
-                                "total_plies": total,
-                                "move_number": move_number,
-                                "color": color,
-                                "move_san": san,
-                            },
-                        )
-                        _prog.expire(progress_key, 3600)
-                    except Exception:
-                        pass
+                print(f"[analyze:{stages[0]}] ply {ply + 1}/{total} {color} {label}")
 
             try:
-                engine_instance = open_engine()
-                if settings.enable_maia and maia_available(maia_rating):
-                    try:
-                        maia_engine = open_maia_engine(rating=maia_rating)
-                    except Exception as e:
-                        print(f"Maia init failed; continuing without: {e}")
-                        maia_engine = None
-                move_results = analyze_game_moves(
-                    engine_instance,
-                    game.pgn,
-                    maia_engine=maia_engine,
-                    maia_rating=maia_rating,
-                    progress_cb=_report,
-                )
-
-                if settings.enable_motifs:
-                    for mr in move_results:
-                        board = chess.Board(mr["fen"])
-                        geo = detect_geometric_motifs(board)
-                        verified = verify_motifs(engine_instance, board, geo) if geo else []
-                        mr["motifs"] = verified
-                        mr["features"] = extract_features(board)
-                else:
-                    for mr in move_results:
-                        mr["motifs"] = []
-                        mr["features"] = extract_features(chess.Board(mr["fen"]))
-            except Exception as e:
+                session = AnalysisSession(db=db, game=game, pool=pool, emitter=None)
+                await session.load()
+                session.set_desired_stages(stages)
+                await session.run()
+            except Exception as e:  # pragma: no cover
                 game.analysis_status = "failed"
                 await db.commit()
                 return {"error": str(e)}
 
-            for mr in move_results:
-                details = {
-                    "multipv": mr.get("multipv", []),
-                    "motifs": mr.get("motifs", []),
-                    "features": mr.get("features", {}),
-                }
-                ma = MoveAnalysis(
-                    game_id=game.id,
-                    move_number=mr["move_number"],
-                    color=mr["color"],
-                    move_san=mr["move_san"],
-                    eval_before=mr["eval_before"],
-                    eval_after=mr["eval_after"],
-                    best_move_san=mr["best_move_san"],
-                    classification=mr["classification"],
-                    fen=mr.get("fen"),
-                    win_percent_before=mr.get("win_percent_before"),
-                    win_percent_after=mr.get("win_percent_after"),
-                    accuracy_percent=mr.get("accuracy_percent"),
-                    is_critical_moment=mr.get("is_critical_moment"),
-                    maia_top1_san=mr.get("maia_top1_san"),
-                    maia_top1_prob=mr.get("maia_top1_prob"),
-                    maia_match_played=mr.get("maia_match_played"),
-                    maia_rating_used=mr.get("maia_rating_used"),
-                    details_json=details,
-                )
-                db.add(ma)
+            # Re-fetch persisted rows for summary + stage rollup
+            rows_result = await db.execute(
+                select(MoveAnalysis).where(MoveAnalysis.game_id == game.id)
+                .order_by(MoveAnalysis.move_number, MoveAnalysis.color.desc())
+            )
+            rows = rows_result.scalars().all()
 
-            # Collect opening SAN moves (first 20 plies) for ECO classification
+            move_dicts = [
+                {
+                    "move_number": r.move_number,
+                    "color": r.color,
+                    "classification": r.classification,
+                    "centipawn_loss": max(0.0, (r.eval_before or 0) - (r.eval_after or 0)),
+                    "accuracy_percent": r.accuracy_percent,
+                    "move_number_int": r.move_number,
+                    "total_moves": len(rows) // 2,
+                    "features": (r.details_json or {}).get("features", {}),
+                    "motifs": (r.details_json or {}).get("motifs", []),
+                }
+                for r in rows
+            ]
+
             opening_sans: list[str] = []
             try:
                 pgn_game = chess.pgn.read_game(io.StringIO(game.pgn))
@@ -204,43 +167,99 @@ async def _analyze_game_async(game_id: str):
             except Exception:
                 opening_sans = []
 
-            summary_data = compute_game_summary(move_results, opening_moves_san=opening_sans)
+            summary_data = compute_game_summary(move_dicts, opening_moves_san=opening_sans)
 
-            game_summary = GameSummary(
-                game_id=game.id,
-                blunders=summary_data["blunders"],
-                mistakes=summary_data["mistakes"],
-                inaccuracies=summary_data["inaccuracies"],
-                avg_eval_loss=summary_data["avg_eval_loss"],
-                phase_scores=summary_data["phase_scores"],
-                time_trouble=summary_data["time_trouble"],
-                accuracy_white=summary_data.get("accuracy_white"),
-                accuracy_black=summary_data.get("accuracy_black"),
-                opening_eco=summary_data.get("opening_eco"),
-                opening_name=summary_data.get("opening_name"),
-                phase_acpl=summary_data.get("phase_acpl"),
-                motif_counts=summary_data.get("motif_counts"),
+            # Upsert GameSummary
+            existing = await db.execute(
+                select(GameSummary).where(GameSummary.game_id == game.id)
             )
-            db.add(game_summary)
-            game.analysis_status = "done"
+            summary_row = existing.scalar_one_or_none()
+            if summary_row is None:
+                summary_row = GameSummary(game_id=game.id)
+                db.add(summary_row)
+            summary_row.blunders = summary_data["blunders"]
+            summary_row.mistakes = summary_data["mistakes"]
+            summary_row.inaccuracies = summary_data["inaccuracies"]
+            summary_row.avg_eval_loss = summary_data["avg_eval_loss"]
+            summary_row.phase_scores = summary_data["phase_scores"]
+            summary_row.time_trouble = summary_data["time_trouble"]
+            summary_row.accuracy_white = summary_data.get("accuracy_white")
+            summary_row.accuracy_black = summary_data.get("accuracy_black")
+            summary_row.opening_eco = summary_data.get("opening_eco")
+            summary_row.opening_name = summary_data.get("opening_name")
+            summary_row.phase_acpl = summary_data.get("phase_acpl")
+            summary_row.motif_counts = summary_data.get("motif_counts")
+
+            # Game-level stage rollup: highest stage present on every row wins.
+            if rows:
+                per_row = [set(r.completed_stages or []) for r in rows]
+                common = set.intersection(*per_row) if per_row else set()
+                for stage in ("deep", "standard", "shallow"):
+                    if stage in common:
+                        game.analysis_stage = stage
+                        break
+                else:
+                    game.analysis_stage = None
+            game.analysis_status = "done" if game.analysis_stage else "pending"
             await db.commit()
 
-            if _prog is not None:
-                try:
-                    _prog.delete(progress_key)
-                except Exception:
-                    pass
-
-            try:
-                generate_move_commentary_task.delay(str(game.id))
-            except Exception:
-                pass
-
-            return {"status": "done", "moves_analyzed": len(move_results), "blunders": summary_data["blunders"]}
+            return {
+                "status": "done",
+                "stage": stages[0],
+                "moves_analyzed": len(rows),
+                "game_stage": game.analysis_stage,
+            }
     finally:
-        if engine_instance:
-            engine_instance.quit()
+        await pool.stop()
         await engine_db.dispose()
+
+
+@celery_app.task(name="app.worker.tasks.deep_scan_all")
+def deep_scan_all(user_id: str):
+    """Run deep + enrich stages for every analysed game belonging to `user_id`.
+
+    Yields priority to any live WebSocket session: before starting work on a
+    game we check `analysis:focus:{game_id}`; if set, skip and retry later.
+    """
+    return asyncio.run(_deep_scan_all_async(user_id))
+
+
+async def _deep_scan_all_async(user_id: str):
+    import uuid as _uuid
+
+    import redis as _redis
+
+    engine_db, factory = _get_session_factory()
+    r = _redis.from_url(settings.redis_url, decode_responses=True)
+    total_games = 0
+    completed_games = 0
+    skipped_games = 0
+
+    async with factory() as db:
+        result = await db.execute(
+            select(Game).where(Game.user_id == _uuid.UUID(user_id))
+        )
+        games = result.scalars().all()
+    total_games = len(games)
+
+    for g in games:
+        gid = str(g.id)
+        if r.exists(f"analysis:focus:{gid}"):
+            skipped_games += 1
+            continue
+        try:
+            await _analyze_game_async(gid, stages=["standard", "deep", "enrich"])
+            completed_games += 1
+        except Exception as exc:  # pragma: no cover
+            print(f"deep_scan_all error on {gid}: {exc}")
+
+    await engine_db.dispose()
+    return {
+        "user_id": user_id,
+        "total": total_games,
+        "completed": completed_games,
+        "skipped": skipped_games,
+    }
 
 
 @celery_app.task(name="app.worker.tasks.generate_all_coaching")
