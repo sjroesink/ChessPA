@@ -8,6 +8,7 @@ import PieceIcon, { pieceFromSan, stripSanPiece } from "@/components/PieceIcon";
 import MoveComment from "@/components/MoveComment";
 import MotifBadge from "@/components/MotifBadge";
 import AccuracyChart from "@/components/AccuracyChart";
+import { useGameAnalysis } from "@/hooks/useGameAnalysis";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -73,10 +74,6 @@ type MoveAnalysis = {
   };
 };
 
-type AnalysisResponse = {
-  moves: MoveAnalysis[];
-};
-
 const CLASSIFICATION_COLORS: Record<string, string> = {
   best: "var(--success)",
   good: "var(--fg-secondary)",
@@ -116,21 +113,33 @@ export default function GameDetailPage() {
   const initialMove = Number(searchParams.get("move")) || 0;
 
   const [game, setGame] = useState<Game | null>(null);
-  const [analysis, setAnalysis] = useState<MoveAnalysis[] | null>(null);
   const [positions, setPositions] = useState<string[]>([]);
   const [moveIndex, setMoveIndexState] = useState(initialMove);
 
-  // Wrap setMoveIndex so URL stays in sync
+  // Live analysis via WebSocket (merges with REST snapshot on mount).
+  const {
+    analysis: liveAnalysis,
+    summary,
+    stageProgress,
+    status: wsStatus,
+    setFocus,
+    requestDeepAll,
+  } = useGameAnalysis(id);
+  const analysis = liveAnalysis.length > 0 ? (liveAnalysis as MoveAnalysis[]) : null;
+
+  // Wrap setMoveIndex so URL + WS focus stay in sync
   const setMoveIndex = useCallback(
     (val: number | ((prev: number) => number)) => {
       setMoveIndexState((prev) => {
         const next = typeof val === "function" ? val(prev) : val;
         const url = next === 0 ? `/games/${id}` : `/games/${id}?move=${next}`;
         router.replace(url, { scroll: false });
+        // next===0 = initial position (no ply yet); send next-1 as focus target for the played ply
+        if (next > 0) setFocus(next - 1);
         return next;
       });
     },
-    [id, router]
+    [id, router, setFocus]
   );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -157,40 +166,24 @@ export default function GameDetailPage() {
     setLoading(true);
     setError(null);
 
-    const fetchGame = fetch(`${API_URL}/api/games/${id}`, {
-      credentials: "include",
-    }).then((res) => {
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      return res.json();
-    });
-
-    const fetchAnalysis = fetch(`${API_URL}/api/games/${id}/analysis`, {
-      credentials: "include",
-    })
+    fetch(`${API_URL}/api/games/${id}`, { credentials: "include" })
       .then((res) => {
-        if (!res.ok) return null;
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json();
       })
-      .catch(() => null);
-
-    Promise.all([fetchGame, fetchAnalysis])
-      .then(([gameData, analysisData]: [Game, AnalysisResponse | null]) => {
+      .then((gameData: Game) => {
         setGame(gameData);
-        if (analysisData?.moves) {
-          setAnalysis(analysisData.moves);
-        }
-
         if (gameData.pgn) {
           const { positions: pos } = parsePgn(gameData.pgn);
           setPositions(pos);
-          // Clamp URL-provided move to valid range; keep 0 if fresh
           const clamped = Math.max(0, Math.min(initialMove, pos.length - 1));
           setMoveIndexState(clamped);
+          if (clamped > 0) setFocus(clamped - 1);
         }
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
-  }, [id, parsePgn]);
+  }, [id, parsePgn, initialMove, setFocus]);
 
   // Keyboard navigation
   useEffect(() => {
@@ -411,6 +404,41 @@ export default function GameDetailPage() {
             );
           })()}
 
+          {/* Summary bar: accuracy, opening, phase ACPL */}
+          {summary && (
+            <div
+              style={{
+                marginTop: 12,
+                padding: "8px 12px",
+                border: "1px solid var(--border)",
+                background: "var(--bg-secondary)",
+                display: "flex",
+                flexDirection: "column",
+                gap: 6,
+                fontSize: 12,
+              }}
+            >
+              <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                {summary.accuracy_white != null && (
+                  <span>
+                    <strong>Wit</strong> {summary.accuracy_white.toFixed(0)}%
+                  </span>
+                )}
+                {summary.accuracy_black != null && (
+                  <span>
+                    <strong>Zwart</strong> {summary.accuracy_black.toFixed(0)}%
+                  </span>
+                )}
+                {summary.opening_eco && (
+                  <span>
+                    <strong>{summary.opening_eco}</strong> {summary.opening_name}
+                  </span>
+                )}
+              </div>
+              {summary.phase_acpl && <AccuracyChart phaseAcpl={summary.phase_acpl} />}
+            </div>
+          )}
+
           {/* Navigation buttons */}
           <div
             style={{
@@ -596,10 +624,61 @@ export default function GameDetailPage() {
               background: "var(--bg-secondary)",
               fontWeight: 600,
               fontSize: "14px",
+              display: "flex",
+              alignItems: "center",
+              gap: 12,
             }}
           >
-            Zetten
+            <span>Zetten</span>
+            <span style={{ fontSize: 11, color: "var(--fg-secondary)", fontWeight: 400 }}>
+              {wsStatus === "open"
+                ? "live"
+                : wsStatus === "connecting"
+                  ? "verbinden…"
+                  : wsStatus === "error"
+                    ? "offline"
+                    : ""}
+            </span>
+            <button
+              onClick={() => requestDeepAll()}
+              title="Laat de achtergrond-analyse het hele potje diep analyseren"
+              style={{
+                marginLeft: "auto",
+                fontSize: 11,
+                padding: "2px 8px",
+                border: "1px solid var(--border)",
+                background: "var(--bg)",
+                color: "var(--fg-secondary)",
+                cursor: "pointer",
+              }}
+            >
+              Diepe analyse
+            </button>
           </div>
+          {stageProgress.total > 0 && (
+            <div
+              style={{
+                padding: "6px 14px",
+                borderBottom: "1px solid var(--border)",
+                display: "flex",
+                gap: 12,
+                fontSize: 11,
+                color: "var(--fg-secondary)",
+                flexWrap: "wrap",
+              }}
+            >
+              {(["shallow", "standard", "deep", "enrich"] as const).map((s) => {
+                const done = stageProgress[s];
+                const pct = stageProgress.total ? Math.round((done / stageProgress.total) * 100) : 0;
+                return (
+                  <span key={s} style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                    <span style={{ textTransform: "capitalize" }}>{s}</span>
+                    <span>{pct}%</span>
+                  </span>
+                );
+              })}
+            </div>
+          )}
           <div style={{ padding: "8px" }}>
             {history.length === 0 && (
               <p style={{ color: "var(--fg-secondary)", fontSize: "14px", padding: "8px" }}>

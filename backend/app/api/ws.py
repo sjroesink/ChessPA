@@ -82,6 +82,10 @@ async def ws_game_analysis(websocket: WebSocket, game_id: str):
             stop_event = asyncio.Event()
             send_lock = asyncio.Lock()
 
+            # Signal to Celery background tasks that this game is being watched live.
+            focus_key = f"analysis:focus:{game_id}"
+            _redis.set(focus_key, "1", ex=3600)
+
             async def emit(event: dict) -> None:
                 async with send_lock:
                     try:
@@ -132,6 +136,10 @@ async def ws_game_analysis(websocket: WebSocket, game_id: str):
                 try:
                     await recv_task
                 except (asyncio.CancelledError, Exception):
+                    pass
+                try:
+                    _redis.delete(focus_key)
+                except Exception:
                     pass
             return
     except WebSocketDisconnect:
