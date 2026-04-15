@@ -16,6 +16,7 @@ type Game = {
   played_at: string;
   analysis_status: string;
   accuracy?: number | null;
+  analysis_stage?: "shallow" | "standard" | "deep" | null;
 };
 
 type GamesResponse = {
@@ -122,15 +123,32 @@ export default function GamesPage() {
   return (
     <main style={{ padding: "32px", maxWidth: "1100px", margin: "0 auto" }}>
       {/* Header */}
-      <h1
-        style={{
-          fontSize: "24px",
-          fontWeight: 600,
-          marginBottom: "24px",
-        }}
-      >
-        Partijen
-      </h1>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 24 }}>
+        <h1 style={{ fontSize: 24, fontWeight: 600, margin: 0, flex: 1 }}>Partijen</h1>
+        <button
+          onClick={async () => {
+            try {
+              await fetch(`${API_URL}/api/games/deep-scan-all`, {
+                method: "POST",
+                credentials: "include",
+              });
+            } catch {
+              // ignore; task runs async on the worker
+            }
+          }}
+          style={{
+            fontSize: 12,
+            padding: "6px 12px",
+            border: "1px solid var(--border)",
+            background: "var(--bg-secondary)",
+            color: "var(--fg)",
+            cursor: "pointer",
+          }}
+          title="Start een achtergrond-diepteanalyse voor alle potjes; de achtergrondtaak geeft altijd voorrang aan het potje dat je op dat moment bekijkt."
+        >
+          Diepe analyse voor alles
+        </button>
+      </div>
 
       {/* Filter bar */}
       <div
@@ -324,10 +342,40 @@ export default function GamesPage() {
                     </td>
                     <td style={{ padding: "10px 14px" }}>
                       {game.analysis_status === "done" ? (
-                        <span style={{ display: "inline-flex", gap: 8, alignItems: "baseline" }}>
-                          <span style={{ color: "var(--success)", fontSize: "12px", fontWeight: 600 }}>
-                            Geanalyseerd
-                          </span>
+                        <span style={{ display: "inline-flex", gap: 6, alignItems: "baseline", flexWrap: "wrap" }}>
+                          {(() => {
+                            const s = game.analysis_stage;
+                            const label =
+                              s === "deep"
+                                ? "Diep"
+                                : s === "standard"
+                                  ? "Standaard"
+                                  : s === "shallow"
+                                    ? "Shallow"
+                                    : "Geanalyseerd";
+                            const color =
+                              s === "deep"
+                                ? "var(--success)"
+                                : s === "standard"
+                                  ? "#b45309"
+                                  : s === "shallow"
+                                    ? "var(--fg-secondary)"
+                                    : "var(--success)";
+                            return (
+                              <span
+                                title={s ? `Analysefase: ${label}` : undefined}
+                                style={{
+                                  fontSize: 11,
+                                  fontWeight: 600,
+                                  padding: "1px 6px",
+                                  border: `1px solid ${color}`,
+                                  color,
+                                }}
+                              >
+                                {label}
+                              </span>
+                            );
+                          })()}
                           {game.accuracy != null && (
                             <span style={{ color: "var(--fg-secondary)", fontSize: "12px" }}>
                               Acc {game.accuracy.toFixed(0)}%

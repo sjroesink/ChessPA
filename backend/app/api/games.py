@@ -39,6 +39,7 @@ def _game_to_dict(game: Game) -> dict:
         "played_at": game.played_at.isoformat() if game.played_at else None,
         "move_count": game.move_count,
         "analysis_status": game.analysis_status,
+        "analysis_stage": game.analysis_stage,
     }
 
 
@@ -211,7 +212,7 @@ async def analyze_all_games(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Queue Stockfish analysis for all unanalyzed games."""
+    """Queue a shallow Stockfish scan for all still-unanalyzed games."""
     result = await db.execute(
         select(Game).where(
             Game.user_id == user.id,
@@ -230,3 +231,18 @@ async def analyze_all_games(
             pass
 
     return {"queued": queued, "total_pending": len(games)}
+
+
+@router.post("/deep-scan-all")
+async def deep_scan_all_games(
+    user: User = Depends(get_current_user),
+):
+    """Kick off a background deep+enrich pass over every one of the user's games.
+
+    The worker yields to any live WebSocket focus, so opening a game always
+    preempts the bulk scan for that specific game.
+    """
+    from app.worker.tasks import deep_scan_all
+
+    task = deep_scan_all.delay(str(user.id))
+    return {"task_id": task.id}
