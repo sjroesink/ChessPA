@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.analysis.engine_pool import build_default_pool, configure_pool
 from app.api.router import router as api_router
+from app.api.ws import router as ws_router
 from app.auth.router import router as auth_router
 from app.config import settings
 
@@ -38,6 +39,7 @@ def create_app() -> FastAPI:
 
     app.include_router(auth_router)
     app.include_router(api_router)
+    app.include_router(ws_router)
 
     return app
 
