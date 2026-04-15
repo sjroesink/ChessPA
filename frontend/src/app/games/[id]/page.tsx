@@ -209,11 +209,14 @@ export default function GameDetailPage() {
     return () => window.removeEventListener("keydown", handler);
   }, [positions.length]);
 
-  // Get eval for current position
+  // Get eval for current position, normalised to White's perspective.
+  // Stored eval_after is from the mover's (STM) perspective.
   const currentEval = (): number => {
     if (!analysis || moveIndex === 0) return 0;
     const move = analysis[moveIndex - 1];
-    return move?.eval_after ?? 0;
+    if (!move) return 0;
+    const stm = move.eval_after ?? 0;
+    return move.color === "white" ? stm : -stm;
   };
 
   // Squares to highlight for the last played move (chess.com style)
@@ -238,6 +241,35 @@ export default function GameDetailPage() {
         { square: played.from, color },
         { square: played.to, color },
       ];
+    } catch {
+      return [];
+    }
+  };
+
+  // Classification badge on the played "to" square (chess.com-style symbol bubble)
+  const classificationBadges = (): { square: string; symbol: string; color: string; title?: string }[] => {
+    if (!analysis || moveIndex === 0) return [];
+    const m = analysis[moveIndex - 1];
+    if (!m) return [];
+    const cls = m.classification;
+    const symbol = CLASSIFICATION_SYMBOLS[cls];
+    if (!symbol) return [];
+    const bg = cls === "blunder" ? "#d33" : cls === "mistake" ? "#e67e22" : cls === "inaccuracy" ? "#dab025" : cls === "best" ? "#22a06b" : null;
+    if (!bg) return [];
+    try {
+      const beforeFen = positions[moveIndex - 1];
+      if (!beforeFen) return [];
+      const chess = new Chess();
+      if (game?.pgn) chess.loadPgn(game.pgn);
+      const hist = chess.history({ verbose: true });
+      const played = hist[moveIndex - 1];
+      if (!played) return [];
+      return [{
+        square: played.to,
+        symbol,
+        color: bg,
+        title: CLASSIFICATION_LABELS[cls] || cls,
+      }];
     } catch {
       return [];
     }
@@ -368,6 +400,7 @@ export default function GameDetailPage() {
                     width={400}
                     arrows={bestMoveArrow()}
                     highlightedSquares={lastMoveHighlights()}
+                    badges={classificationBadges()}
                   />
                 </div>
                 <div style={nameBarStyle}>
